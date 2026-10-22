@@ -1,42 +1,125 @@
+﻿export const STATUS_GATES = Object.freeze({
+  OK_TO_HARVEST: Object.freeze({
+    minAvgBrix: 19.5,
+    minRatio: 0.94,
+    maxRatio: 1.05,
+    minAgeMonths: 10.5,
+  }),
+  APPROACHING: Object.freeze({
+    minAvgBrix: 17.5,
+    minRatio: 0.85,
+    minAgeMonths: 9.5,
+  }),
+  OVER_MATURE: Object.freeze({
+    maxAgeMonths: 13.5,
+    maxRatio: 1.08,
+  }),
+});
+
+export const READINESS_CONFIG = Object.freeze({
+  weights: Object.freeze({
+    brix: 0.45,
+    ratio: 0.35,
+    age: 0.2,
+  }),
+  age: Object.freeze({
+    minMonths: 6,
+    spanMonths: 6,
+  }),
+  brix: Object.freeze({
+    minBrix: 13,
+    spanBrix: 8,
+  }),
+  ratio: Object.freeze({
+    target: 1.0,
+    penaltyMultiplier: 260,
+  }),
+  yield: Object.freeze({
+    minLkgTc: 0.8,
+    brixFactor: 0.115,
+    maxRatioCap: 1.05,
+    defaultTcHa: 75,
+    planterShare: 0.7,
+    truckCapacityTons: 18,
+  }),
+});
+
 export function evaluateLotMetrics(lot) {
   const topBrix = Number(lot.topBrix) || 0;
   const bottomBrix = Number(lot.bottomBrix) || 0;
   const avgBrix = Number(((topBrix + bottomBrix) / 2).toFixed(1));
   const brixDelta = Number((topBrix - bottomBrix).toFixed(1));
-  const maturityRatio = bottomBrix > 0
-    ? Number((topBrix / bottomBrix).toFixed(2))
-    : 0;
+  const maturityRatio =
+    bottomBrix > 0 ? Number((topBrix / bottomBrix).toFixed(2)) : 0;
 
-  const ageScore = Math.round(Math.min(100, Math.max(0, ((lot.cropAgeMonths - 6) / 6) * 100)));
-  const brixScore = Math.round(Math.min(100, Math.max(0, ((avgBrix - 13) / 8) * 100)));
-  const ratioDiff = Math.abs(1.0 - maturityRatio);
-  const ratioScore = Math.round(Math.max(0, 100 - ratioDiff * 260));
+  const { weights, age, brix, ratio, yield: yieldCfg } = READINESS_CONFIG;
 
-  const readinessScore = Math.round(brixScore * 0.45 + ratioScore * 0.35 + ageScore * 0.2);
+  const ageScore = Math.round(
+    Math.min(100, Math.max(0, ((lot.cropAgeMonths - age.minMonths) / age.spanMonths) * 100))
+  );
+  const brixScore = Math.round(
+    Math.min(100, Math.max(0, ((avgBrix - brix.minBrix) / brix.spanBrix) * 100))
+  );
+  const ratioDiff = Math.abs(ratio.target - maturityRatio);
+  const ratioScore = Math.round(
+    Math.max(0, 100 - ratioDiff * ratio.penaltyMultiplier)
+  );
 
-  const estimatedLkgTc = Number(Math.max(0.8, (avgBrix * 0.115 * Math.min(1.05, maturityRatio))).toFixed(2));
-  const estimatedTons = Math.round(Number(lot.areaHa) * Number(lot.expectedTcHa || 75));
+  const readinessScore = Math.round(
+    brixScore * weights.brix + ratioScore * weights.ratio + ageScore * weights.age
+  );
+
+  const estimatedLkgTc = Number(
+    Math.max(
+      yieldCfg.minLkgTc,
+      avgBrix * yieldCfg.brixFactor * Math.min(yieldCfg.maxRatioCap, maturityRatio)
+    ).toFixed(2)
+  );
+  const estimatedTons = Math.round(
+    Number(lot.areaHa) * Number(lot.expectedTcHa || yieldCfg.defaultTcHa)
+  );
   const totalSugarBagsLkg = Math.round(estimatedTons * estimatedLkgTc);
-  const planterShareBags = Math.round(totalSugarBagsLkg * 0.70);
+  const planterShareBags = Math.round(totalSugarBagsLkg * yieldCfg.planterShare);
   const millShareBags = totalSugarBagsLkg - planterShareBags;
-  const estimatedTruckLoads = Math.max(1, Math.ceil(estimatedTons / 18));
-  const apparentPurity = Number(Math.min(92.5, Math.max(72.0, 74 + (avgBrix - 15) * 2.1 - ratioDiff * 12)).toFixed(1));
+  const estimatedTruckLoads = Math.max(
+    1,
+    Math.ceil(estimatedTons / yieldCfg.truckCapacityTons)
+  );
+  const apparentPurity = Number(
+    Math.min(92.5, Math.max(72.0, 74 + (avgBrix - 15) * 2.1 - ratioDiff * 12)).toFixed(1)
+  );
 
   let status = 'Immature';
-  let recommendation = 'Continue vegetative growth and monitor foliar nutrition. Schedule first refractometer check at 9.5 months.';
+  let recommendation =
+    'Continue vegetative growth and monitor foliar nutrition. Schedule first refractometer check at 9.5 months.';
   let harvestWindow = 'In 60–90 Days';
 
-  if (lot.cropAgeMonths > 13.5 || maturityRatio > 1.08) {
+  if (
+    lot.cropAgeMonths > STATUS_GATES.OVER_MATURE.maxAgeMonths ||
+    maturityRatio > STATUS_GATES.OVER_MATURE.maxRatio
+  ) {
     status = 'Over-mature Risk';
-    recommendation = 'URGENT: Top Brix exceeds Bottom Brix (Ratio > 1.08), indicating sucrose inversion risk. Issue priority cutting permit immediately.';
+    recommendation =
+      'URGENT: Top Brix exceeds Bottom Brix (Ratio > 1.08), indicating sucrose inversion risk. Issue priority cutting permit immediately.';
     harvestWindow = 'Immediate (Within 3–5 Days)';
-  } else if (avgBrix >= 19.5 && maturityRatio >= 0.94 && maturityRatio <= 1.05 && lot.cropAgeMonths >= 10.5) {
+  } else if (
+    avgBrix >= STATUS_GATES.OK_TO_HARVEST.minAvgBrix &&
+    maturityRatio >= STATUS_GATES.OK_TO_HARVEST.minRatio &&
+    maturityRatio <= STATUS_GATES.OK_TO_HARVEST.maxRatio &&
+    lot.cropAgeMonths >= STATUS_GATES.OK_TO_HARVEST.minAgeMonths
+  ) {
     status = 'OK to Harvest';
-    recommendation = 'Stalk sucrose concentration is uniform from bottom to top internodes. Optimal maturity reached for peak LKg/TC recovery.';
+    recommendation =
+      'Stalk sucrose concentration is uniform from bottom to top internodes. Optimal maturity reached for peak LKg/TC recovery.';
     harvestWindow = 'Optimal Now (Next 7–14 Days)';
-  } else if (avgBrix >= 17.5 && maturityRatio >= 0.85 && lot.cropAgeMonths >= 9.5) {
+  } else if (
+    avgBrix >= STATUS_GATES.APPROACHING.minAvgBrix &&
+    maturityRatio >= STATUS_GATES.APPROACHING.minRatio &&
+    lot.cropAgeMonths >= STATUS_GATES.APPROACHING.minAgeMonths
+  ) {
     status = 'Approaching';
-    recommendation = 'Bottom stalk has accumulated high sucrose while top internodes are still ripening. Withhold irrigation and re-sample in 7–10 days.';
+    recommendation =
+      'Bottom stalk has accumulated high sucrose while top internodes are still ripening. Withhold irrigation and re-sample in 7–10 days.';
     harvestWindow = 'In 10–21 Days';
   }
 
@@ -62,10 +145,9 @@ export function evaluateLotMetrics(lot) {
   };
 }
 
-// Geodesic polygon area calculation in Hectares (ha) from [[lat, lng], ...]
 export function calculatePolygonAreaHa(coords) {
   if (!Array.isArray(coords) || coords.length < 3) return 0;
-  const earthRadius = 6378137; // meters
+  const earthRadius = 6378137;
   let areaSqMeters = 0;
 
   for (let i = 0; i < coords.length; i++) {

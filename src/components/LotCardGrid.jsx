@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { MapPin, User, Calendar, Truck, ChevronRight, Sprout } from 'lucide-react';
 import { getStatusStyles } from '../utils/caneCalculations';
 
@@ -28,20 +28,23 @@ export default function LotCardGrid({ lots, onSelectLot }) {
             onClick={() => onSelectLot(lot)}
             className="group relative bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-emerald-600/60 dark:hover:border-emerald-500/60 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between overflow-hidden"
           >
-            {/* Status Top Accent Bar */}
             <div className={'h-1.5 w-full ' + styles.bar} />
 
             <div className="p-4 sm:p-5">
-              {/* Top Tier: Lot ID + Crop Class + Status Badge */}
               <div className="flex items-start justify-between gap-2 mb-3">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
                       {lot.id}
                     </span>
                     <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-slate-50 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                       {lot.cropClass}
                     </span>
+                    {lot.pendingSync && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                        Pending sync
+                      </span>
+                    )}
                   </div>
                   <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white mt-1.5 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
                     {lot.hacienda}
@@ -59,7 +62,6 @@ export default function LotCardGrid({ lots, onSelectLot }) {
                 </span>
               </div>
 
-              {/* Planter & Sector Metadata */}
               <div className="grid grid-cols-1 gap-1.5 text-xs text-slate-600 dark:text-slate-400 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
                 <div className="flex items-center justify-between">
                   <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
@@ -88,7 +90,6 @@ export default function LotCardGrid({ lots, onSelectLot }) {
                 </div>
               </div>
 
-              {/* Middle Tier: 3 Key Agronomic Metrics (Fixed Dark Mode Contrast) */}
               <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center">
                 <div>
                   <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
@@ -125,7 +126,6 @@ export default function LotCardGrid({ lots, onSelectLot }) {
                 </div>
               </div>
 
-              {/* Readiness Progress Bar */}
               <div className="mt-4">
                 <div className="flex items-center justify-between text-xs mb-1.5">
                   <span className="font-semibold text-slate-600 dark:text-slate-300">
@@ -144,7 +144,6 @@ export default function LotCardGrid({ lots, onSelectLot }) {
               </div>
             </div>
 
-            {/* Bottom Footer */}
             <div
               className={
                 'px-4 sm:px-5 py-3 border-t flex items-center justify-between text-xs transition-colors ' +
