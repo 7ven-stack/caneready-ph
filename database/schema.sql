@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS farm_lots (
+  id VARCHAR(32) PRIMARY KEY,
+  hacienda VARCHAR(120) NOT NULL,
+  planter VARCHAR(120) NOT NULL,
+  sector VARCHAR(80) NOT NULL,
+  variety VARCHAR(80) NOT NULL,
+  crop_class VARCHAR(40) NOT NULL,
+  area_ha NUMERIC(6,2) NOT NULL,
+  expected_tc_ha NUMERIC(6,2) DEFAULT 75,
+  planting_date DATE NOT NULL,
+  crop_age_months NUMERIC(4,1) NOT NULL,
+  top_brix NUMERIC(4,1) NOT NULL,
+  bottom_brix NUMERIC(4,1) NOT NULL,
+  soil_moisture VARCHAR(60) DEFAULT 'Optimal (18%)',
+  last_sampled DATE NOT NULL,
+  svg_points TEXT,
+  label_pos JSONB,
+  dispatch JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
