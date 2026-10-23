@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { Pencil } from 'lucide-react';
+import { Pencil, AlertCircle } from 'lucide-react';
 import { getStatusStyles } from '../utils/caneCalculations';
 
 export default function PlanterTableView({ lots, onSelectLot, onEditLot }) {
@@ -30,11 +30,20 @@ export default function PlanterTableView({ lots, onSelectLot, onEditLot }) {
                   className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
                 >
                   <td className="py-3.5 px-4">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-mono font-bold text-slate-900 dark:text-white">{lot.id}</span>
                       {lot.pendingSync && (
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
                           Pending
+                        </span>
+                      )}
+                      {lot.isUnverifiedDefault && (
+                        <span
+                          title="Flagged: 20.0 / 20.5° matches legacy form default"
+                          className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300"
+                        >
+                          <AlertCircle className="w-2.5 h-2.5" />
+                          Unverified
                         </span>
                       )}
                     </div>
@@ -56,20 +65,28 @@ export default function PlanterTableView({ lots, onSelectLot, onEditLot }) {
                     {lot.cropAgeMonths} mos
                   </td>
                   <td className="py-3.5 px-4">
-                    <span className="font-bold text-slate-900 dark:text-white">{lot.avgBrix}°</span>
-                    <span className="text-slate-400 ml-1">
-                      ({lot.topBrix}/{lot.bottomBrix})
-                    </span>
+                    {lot.hasBrixSample ? (
+                      <>
+                        <span className="font-bold text-slate-900 dark:text-white">{lot.avgBrix}°</span>
+                        <span className="text-slate-400 ml-1">
+                          ({lot.topBrix}/{lot.bottomBrix})
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-amber-700 dark:text-amber-400 font-semibold">
+                        No sample yet
+                      </span>
+                    )}
                   </td>
                   <td className="py-3.5 px-4 font-mono font-semibold text-slate-800 dark:text-slate-200">
-                    {lot.maturityRatio}
+                    {lot.hasBrixSample ? lot.maturityRatio : '—'}
                   </td>
                   <td className="py-3.5 px-4">
                     <span
                       className={'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ' + styles.badge}
                     >
                       <span className={'w-1.5 h-1.5 rounded-full ' + styles.dot} />
-                      {lot.status}
+                      {lot.statusDisplay || lot.status}
                     </span>
                   </td>
                   <td className="py-3.5 px-4 text-right">

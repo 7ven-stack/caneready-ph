@@ -1,5 +1,15 @@
 ﻿import React from 'react';
-import { MapPin, User, Calendar, Truck, ChevronRight, Sprout } from 'lucide-react';
+import {
+  MapPin,
+  User,
+  Calendar,
+  Truck,
+  ChevronRight,
+  Sprout,
+  Scale,
+  Layers,
+  AlertCircle,
+} from 'lucide-react';
 import { getStatusStyles } from '../utils/caneCalculations';
 
 export default function LotCardGrid({ lots, onSelectLot }) {
@@ -31,6 +41,7 @@ export default function LotCardGrid({ lots, onSelectLot }) {
             <div className={'h-1.5 w-full ' + styles.bar} />
 
             <div className="p-4 sm:p-5">
+              {/* Top Tier: Lot ID + Crop Class + Status Badge */}
               <div className="flex items-start justify-between gap-2 mb-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -45,10 +56,25 @@ export default function LotCardGrid({ lots, onSelectLot }) {
                         Pending sync
                       </span>
                     )}
+                    {lot.isUnverifiedDefault && (
+                      <span
+                        title="Flagged: 20.0 / 20.5° matches legacy form default. Re-sample to verify."
+                        className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-300"
+                      >
+                        <AlertCircle className="w-3 h-3" />
+                        Unverified (form default)
+                      </span>
+                    )}
                   </div>
                   <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white mt-1.5 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
                     {lot.hacienda}
                   </h3>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>
+                      Planter: <strong className="text-slate-800 dark:text-slate-100">{lot.planter}</strong>
+                    </span>
+                  </div>
                 </div>
 
                 <span
@@ -58,61 +84,99 @@ export default function LotCardGrid({ lots, onSelectLot }) {
                   }
                 >
                   <span className={'w-1.5 h-1.5 rounded-full ' + styles.dot} />
-                  {lot.status}
+                  {lot.statusDisplay || lot.status}
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 gap-1.5 text-xs text-slate-600 dark:text-slate-400 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
-                    <User className="w-3.5 h-3.5 text-slate-400" />
-                    Planter:
-                  </span>
-                  <strong className="text-slate-800 dark:text-slate-100 truncate">{lot.planter}</strong>
+              {/* 1e. Separate Variety, Est. tons, Area, and Sector into their own distinct fields */}
+              <div className="grid grid-cols-2 gap-2 text-xs mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 flex items-center gap-1">
+                    <MapPin className="w-3 h-3" />
+                    Sector
+                  </div>
+                  <div className="font-bold text-slate-800 dark:text-slate-200 truncate mt-0.5">
+                    {lot.sector}
+                  </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
-                    <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                    Location:
-                  </span>
-                  <span className="font-medium text-slate-700 dark:text-slate-200">
-                    {lot.sector} • <strong>{lot.areaHa} ha</strong>
-                  </span>
+
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 flex items-center gap-1">
+                    <Layers className="w-3 h-3" />
+                    Area
+                  </div>
+                  <div className="font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                    {lot.areaHa} ha
+                  </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
-                    <Sprout className="w-3.5 h-3.5 text-slate-400" />
-                    Variety:
-                  </span>
-                  <span className="font-medium text-slate-700 dark:text-slate-200">
-                    {lot.variety} ({lot.estimatedTons.toLocaleString()} MT)
-                  </span>
+
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 flex items-center gap-1">
+                    <Sprout className="w-3 h-3" />
+                    Variety
+                  </div>
+                  <div className="font-bold text-slate-800 dark:text-slate-200 truncate mt-0.5">
+                    {lot.variety}
+                  </div>
+                </div>
+
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 flex items-center gap-1">
+                    <Scale className="w-3 h-3" />
+                    Est. Tons
+                  </div>
+                  <div className="font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                    {lot.estimatedTons.toLocaleString()} MT
+                  </div>
                 </div>
               </div>
 
+              {/* Middle Tier: 3 Key Agronomic Metrics */}
               <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center">
                 <div>
                   <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     Avg Brix
                   </div>
-                  <div className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
-                    {lot.avgBrix}°
-                  </div>
-                  <div className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                    T:{lot.topBrix}° / B:{lot.bottomBrix}°
-                  </div>
+                  {lot.hasBrixSample ? (
+                    <>
+                      <div className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
+                        {lot.avgBrix}°
+                      </div>
+                      <div className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                        T:{lot.topBrix}° / B:{lot.bottomBrix}°
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-xs font-bold text-amber-700 dark:text-amber-400 mt-1">
+                        No sample yet
+                      </div>
+                      <div className="text-[10px] text-slate-400">Needs 1st sample</div>
+                    </>
+                  )}
                 </div>
+
                 <div className="border-x border-slate-200 dark:border-slate-700 px-1">
                   <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     T/B Ratio
                   </div>
-                  <div className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
-                    {lot.maturityRatio}
-                  </div>
-                  <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
-                    Opt: 0.95–1.02
-                  </div>
+                  {lot.hasBrixSample ? (
+                    <>
+                      <div className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
+                        {lot.maturityRatio}
+                      </div>
+                      <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                        Opt: 0.94–1.05
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-xs font-bold text-slate-400 mt-1">—</div>
+                      <div className="text-[10px] text-slate-400">Opt: 0.94–1.05</div>
+                    </>
+                  )}
                 </div>
+
                 <div>
                   <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     Crop Age
@@ -121,29 +185,33 @@ export default function LotCardGrid({ lots, onSelectLot }) {
                     {lot.cropAgeMonths}m
                   </div>
                   <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
-                    {lot.estimatedLkgTc} LKg/TC
+                    {lot.hasBrixSample ? `${lot.estimatedLkgTc} LKg/TC` : 'No yield est.'}
                   </div>
                 </div>
               </div>
 
+              {/* Readiness Progress Bar */}
               <div className="mt-4">
                 <div className="flex items-center justify-between text-xs mb-1.5">
                   <span className="font-semibold text-slate-600 dark:text-slate-300">
                     Harvest Readiness Index
                   </span>
                   <span className="font-extrabold text-slate-900 dark:text-white">
-                    {lot.readinessScore}%
+                    {lot.hasBrixSample ? `${lot.readinessScore}%` : 'No sample yet'}
                   </span>
                 </div>
                 <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                  <div
-                    className={'h-full rounded-full transition-all duration-300 ' + styles.bar}
-                    style={{ width: lot.readinessScore + '%' }}
-                  />
+                  {lot.hasBrixSample && (
+                    <div
+                      className={'h-full rounded-full transition-all duration-300 ' + styles.bar}
+                      style={{ width: lot.readinessScore + '%' }}
+                    />
+                  )}
                 </div>
               </div>
             </div>
 
+            {/* Bottom Footer */}
             <div
               className={
                 'px-4 sm:px-5 py-3 border-t flex items-center justify-between text-xs transition-colors ' +
@@ -157,15 +225,24 @@ export default function LotCardGrid({ lots, onSelectLot }) {
                   <Truck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                   Scheduled: {lot.dispatch.scheduledDate}
                 </span>
-              ) : (
+              ) : lot.hasBrixSample && lot.lastSampled ? (
                 <span className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-400 font-medium">
                   <Calendar className="w-3.5 h-3.5 text-slate-400" />
                   Sampled: {lot.lastSampled}
                 </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-400 font-semibold">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  No sample yet
+                </span>
               )}
 
               <span className="inline-flex items-center gap-1 font-bold text-emerald-700 dark:text-emerald-400 group-hover:translate-x-0.5 transition-transform">
-                {isReady && !lot.dispatch ? 'Schedule Cut' : 'Inspect Lot'}
+                {!lot.hasBrixSample
+                  ? 'Log First Brix'
+                  : isReady && !lot.dispatch
+                  ? 'Schedule Cut'
+                  : 'Inspect Lot'}
                 <ChevronRight className="w-3.5 h-3.5" />
               </span>
             </div>

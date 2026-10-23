@@ -1,5 +1,6 @@
 ﻿import { createClient } from '@supabase/supabase-js';
 import { INITIAL_LOTS } from '../data/initialLots';
+import { computeCropAgeMonths } from '../utils/caneCalculations';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -119,7 +120,22 @@ function parseCoordinates(row) {
   return fallback ? fallback.coordinates : null;
 }
 
+function toNullableNumber(val) {
+  if (val === null || val === undefined || val === '') return null;
+  const num = Number(val);
+  return Number.isFinite(num) ? num : null;
+}
+
+// 1b & 1c. Preserve null on top_brix / bottom_brix / last_sampled / soil_moisture and compute age from planting_date
 function fromSqlRow(row) {
+  const plantingDate = row.planting_date ?? row.plantingDate ?? null;
+  const storedAge = toNullableNumber(row.crop_age_months ?? row.cropAgeMonths);
+  const cropAgeMonths = computeCropAgeMonths(plantingDate, storedAge);
+
+  const topBrix = toNullableNumber(row.top_brix ?? row.topBrix);
+  const bottomBrix = toNullableNumber(row.bottom_brix ?? row.bottomBrix);
+  const hasSample = topBrix !== null && bottomBrix !== null;
+
   return {
     id: row.id,
     hacienda: row.hacienda,
@@ -127,14 +143,15 @@ function fromSqlRow(row) {
     sector: row.sector,
     variety: row.variety,
     cropClass: row.crop_class ?? row.cropClass,
-    areaHa: Number(row.area_ha ?? row.areaHa),
+    areaHa: Number(row.area_ha ?? row.areaHa ?? 0),
     expectedTcHa: Number(row.expected_tc_ha ?? row.expectedTcHa ?? 75),
-    plantingDate: row.planting_date ?? row.plantingDate,
-    cropAgeMonths: Number(row.crop_age_months ?? row.cropAgeMonths),
-    topBrix: Number(row.top_brix ?? row.topBrix),
-    bottomBrix: Number(row.bottom_brix ?? row.bottomBrix),
-    soilMoisture: row.soil_moisture ?? row.soilMoisture,
-    lastSampled: row.last_sampled ?? row.lastSampled,
+    plantingDate,
+    cropAgeMonths,
+    topBrix,
+    bottomBrix,
+    soilMoisture: row.soil_moisture ?? row.soilMoisture ?? null,
+    lastSampled: hasSample ? (row.last_sampled ?? row.lastSampled ?? null) : null,
+    sampleVerified: Boolean(row.sampleVerified),
     coordinates: parseCoordinates(row),
     dispatch:
       typeof row.dispatch === 'string'
@@ -155,7 +172,7 @@ export function mergeLotsWithPendingOps(remoteLots, pendingOps = getPendingOpera
   for (const op of pendingOps) {
     const { type, lotId, payload } = op;
     if (type === 'CREATE_LOT' && payload) {
-      lotMap.set(lotId, { ...payload, pendingSync: true, lastSyncError: op.lastError });
+      lotMap.set(lotId, { ...fromSqlRow(payload), pendingSync: true, lastSyncError: op.lastError });
     } else if (type === 'DELETE_LOT') {
       lotMap.delete(lotId);
     } else if (lotMap.has(lotId)) {
@@ -168,6 +185,7 @@ export function mergeLotsWithPendingOps(remoteLots, pendingOps = getPendingOpera
           topBrix: payload.topBrix,
           bottomBrix: payload.bottomBrix,
           lastSampled: payload.lastSampled,
+          sampleVerified: true,
           pendingSync: true,
         });
       } else if (type === 'UPDATE_BOUNDARY') {
@@ -207,6 +225,9 @@ function formatSupabaseError(error) {
   if (!error) return 'Unknown Supabase error';
   if (error.code === '23505') {
     return 'Lot ID already exists (PK conflict 23505). Please use the next sequential ID.';
+  }
+  if (error.code === '23502') {
+    return `Database NOT NULL constraint triggered (${error.message}). Please run Phase 1b migration in Supabase SQL Editor so Brix/last_sampled are nullable.`;
   }
   if (error.code === '42501') {
     return `Row-Level Security policy blocked write (${error.message}).`;
@@ -268,7 +289,7 @@ export async function fetchAllLots() {
   }
 
   const { lots: cachedLots, isCache } = loadCachedLots();
-  const mergedOffline = mergeLotsWithPendingOps(cachedLots, pendingOps);
+  const mergedOffline = mergeLotsWithPendingOps(cachedLots.map(fromSqlRow), pendingOps);
   return {
     ok: false,
     lots: mergedOffline,
@@ -281,6 +302,11 @@ export async function fetchAllLots() {
 
 export async function createFarmLot(newLot) {
   let supabaseError = null;
+  const hasBrix =
+    newLot.topBrix !== null &&
+    newLot.topBrix !== undefined &&
+    newLot.bottomBrix !== null &&
+    newLot.bottomBrix !== undefined;
 
   if (supabase) {
     try {
@@ -298,10 +324,10 @@ export async function createFarmLot(newLot) {
             expected_tc_ha: newLot.expectedTcHa,
             planting_date: newLot.plantingDate,
             crop_age_months: newLot.cropAgeMonths,
-            top_brix: newLot.topBrix,
-            bottom_brix: newLot.bottomBrix,
-            soil_moisture: newLot.soilMoisture,
-            last_sampled: newLot.lastSampled,
+            top_brix: hasBrix ? newLot.topBrix : null,
+            bottom_brix: hasBrix ? newLot.bottomBrix : null,
+            soil_moisture: newLot.soilMoisture || null,
+            last_sampled: hasBrix ? newLot.lastSampled : null,
             svg_points: newLot.coordinates ? JSON.stringify(newLot.coordinates) : null,
             dispatch: newLot.dispatch ?? null,
           },
@@ -321,6 +347,17 @@ export async function createFarmLot(newLot) {
       } else if (!data || data.length === 0) {
         supabaseError = 'Insert blocked by Supabase RLS policy (0 rows returned).';
       } else {
+        if (hasBrix) {
+          await supabase.from('brix_samples').insert([
+            {
+              lot_id: newLot.id,
+              top_brix: newLot.topBrix,
+              bottom_brix: newLot.bottomBrix,
+              sampled_at: newLot.lastSampled,
+              sampled_by: 'Initial registration sample',
+            },
+          ]);
+        }
         return { ok: true, error: null, source: 'Supabase Cloud DB', data: data[0] };
       }
     } catch (err) {
@@ -347,7 +384,7 @@ export async function createFarmLot(newLot) {
       const body = await res.json().catch(() => ({}));
       return {
         ok: false,
-        error: body.error || `Express POST failed (HTTP ${res.status})`,
+        error: supabaseError || body.error || `Express POST failed (HTTP ${res.status})`,
         source: 'Express API Server',
       };
     }
@@ -378,7 +415,7 @@ export async function updateLotDetails(lotId, updates) {
           expected_tc_ha: updates.expectedTcHa,
           planting_date: updates.plantingDate,
           crop_age_months: updates.cropAgeMonths,
-          soil_moisture: updates.soilMoisture,
+          soil_moisture: updates.soilMoisture || null,
         })
         .eq('id', lotId)
         .select();
@@ -439,6 +476,16 @@ export async function updateLotBrixSample(lotId, topBrix, bottomBrix, lastSample
       } else if (!data || data.length === 0) {
         supabaseError = `Brix update for ${lotId} blocked by RLS policy or lot not found.`;
       } else {
+        // Also record in brix_samples history table if migration has been applied
+        await supabase.from('brix_samples').insert([
+          {
+            lot_id: lotId,
+            top_brix: topBrix,
+            bottom_brix: bottomBrix,
+            sampled_at: lastSampled,
+            sampled_by: 'Field Officer',
+          },
+        ]);
         return { ok: true, error: null, source: 'Supabase Cloud DB', data: data[0] };
       }
     } catch (err) {

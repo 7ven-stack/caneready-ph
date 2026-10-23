@@ -382,7 +382,16 @@ export default function App() {
     return res;
   };
 
-  const handleExportCsv = () => {
+    const handleExportCsv = () => {
+    const escapeCsvField = (value) => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (/[",\r\n]/.test(str)) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    };
+
     const headers = [
       'Lot ID',
       'Hacienda',
@@ -390,6 +399,7 @@ export default function App() {
       'Sector',
       'Variety',
       'Crop Class',
+      'Planting / Cut Date',
       'Area (Ha)',
       'Crop Age (Mos)',
       'Top Brix',
@@ -399,37 +409,50 @@ export default function App() {
       'Est. LKg/TC',
       'Est. Tons',
       'Readiness Score',
+      'Last Sampled',
+      'Scheduled Date',
       'Status',
     ];
+
     const rows = filteredLots.map((l) => [
       l.id,
-      '"' + l.hacienda + '"',
-      '"' + l.planter + '"',
-      '"' + l.sector + '"',
-      '"' + l.variety + '"',
-      '"' + l.cropClass + '"',
+      l.hacienda,
+      l.planter,
+      l.sector,
+      l.variety,
+      l.cropClass,
+      l.plantingDate || '',
       l.areaHa,
       l.cropAgeMonths,
-      l.topBrix,
-      l.bottomBrix,
-      l.avgBrix,
-      l.maturityRatio,
-      l.estimatedLkgTc,
+      l.hasBrixSample ? l.topBrix : 'No sample yet',
+      l.hasBrixSample ? l.bottomBrix : 'No sample yet',
+      l.hasBrixSample ? l.avgBrix : 'No sample yet',
+      l.hasBrixSample ? l.maturityRatio : '',
+      l.hasBrixSample ? l.estimatedLkgTc : '',
       l.estimatedTons,
-      l.readinessScore,
-      '"' + l.status + '"',
+      l.hasBrixSample ? l.readinessScore : '',
+      l.hasBrixSample && l.lastSampled ? l.lastSampled : 'No sample yet',
+      l.dispatch?.scheduledDate || '',
+      l.statusDisplay || l.status,
     ]);
-    const nl = String.fromCharCode(10);
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join(nl);
-    const encodedUri = encodeURI(csvContent);
+
+    const csvLines = [
+      headers.map(escapeCsvField).join(','),
+      ...rows.map((row) => row.map(escapeCsvField).join(',')),
+    ].join('\r\n');
+
+    // 1f. Build a Blob with a UTF-8 BOM (\uFEFF) and RFC-4180 quote escaping
+    const blob = new Blob(['\uFEFF' + csvLines], {
+      type: 'text/csv;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
+    link.setAttribute('href', url);
     link.setAttribute('download', 'caneready_lots_report.csv');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -610,3 +633,4 @@ export default function App() {
     </div>
   );
 }
+

@@ -44,19 +44,116 @@ export const READINESS_CONFIG = Object.freeze({
   }),
 });
 
-export function evaluateLotMetrics(lot) {
-  const topBrix = Number(lot.topBrix) || 0;
-  const bottomBrix = Number(lot.bottomBrix) || 0;
-  const avgBrix = Number(((topBrix + bottomBrix) / 2).toFixed(1));
-  const brixDelta = Number((topBrix - bottomBrix).toFixed(1));
-  const maturityRatio =
-    bottomBrix > 0 ? Number((topBrix / bottomBrix).toFixed(2)) : 0;
+// 1c. Compute cropAgeMonths dynamically from plantingDate (or last cut date for ratoons) at read time;
+// keep stored cropAgeMonths only as a fallback for legacy rows lacking a valid plantingDate.
+export function computeCropAgeMonths(plantingDate, fallbackMonths = null, now = new Date()) {
+  if (typeof plantingDate === 'string' && plantingDate.trim()) {
+    const parsed = new Date(plantingDate + 'T00:00:00');
+    if (!Number.isNaN(parsed.getTime())) {
+      const diffMs = now.getTime() - parsed.getTime();
+      const months = diffMs / (1000 * 60 * 60 * 24 * 30.4375);
+      return Number(Math.max(0, months).toFixed(1));
+    }
+  }
+  const fallback = Number(fallbackMonths);
+  return Number.isFinite(fallback) && fallback >= 0 ? Number(fallback.toFixed(1)) : 0;
+}
 
+export function hasValidBrixSample(lot) {
+  if (!lot) return false;
+  const topRaw = lot.topBrix;
+  const botRaw = lot.bottomBrix;
+  if (
+    topRaw === null ||
+    topRaw === undefined ||
+    topRaw === '' ||
+    botRaw === null ||
+    botRaw === undefined ||
+    botRaw === ''
+  ) {
+    return false;
+  }
+  const top = Number(topRaw);
+  const bot = Number(botRaw);
+  return Number.isFinite(top) && Number.isFinite(bot) && top > 0 && bot > 0;
+}
+
+export function isUnverifiedDefaultSample(lot) {
+  if (!hasValidBrixSample(lot)) return false;
+  if (lot.sampleStatus === 'unverified (form default)') return true;
+  if (lot.sampledBy === 'unverified (form default)') return true;
+  if (lot.isUnverifiedDefault === true) return true;
+  // Flag existing backfilled rows that match the legacy 20.0 / 20.5 form defaults
+  const top = Number(lot.topBrix);
+  const bot = Number(lot.bottomBrix);
+  return top === 20.0 && bot === 20.5 && lot.sampleVerified !== true;
+}
+
+export function evaluateLotMetrics(lot) {
   const { weights, age, brix, ratio, yield: yieldCfg } = READINESS_CONFIG;
 
+  const cropAgeMonths = computeCropAgeMonths(lot.plantingDate, lot.cropAgeMonths);
   const ageScore = Math.round(
-    Math.min(100, Math.max(0, ((lot.cropAgeMonths - age.minMonths) / age.spanMonths) * 100))
+    Math.min(100, Math.max(0, ((cropAgeMonths - age.minMonths) / age.spanMonths) * 100))
   );
+
+  const areaHa = Number(lot.areaHa) || 0;
+  const expectedTcHa = Number(lot.expectedTcHa) || yieldCfg.defaultTcHa;
+  const estimatedTons = Math.round(areaHa * expectedTcHa);
+  const estimatedTruckLoads = Math.max(
+    1,
+    Math.ceil(estimatedTons / yieldCfg.truckCapacityTons)
+  );
+
+  const hasSample = hasValidBrixSample(lot);
+  const isUnverifiedDefault = isUnverifiedDefaultSample(lot);
+
+  // 1b. Missing sample: remove `|| 0`, return null score and Needs Attention = "Needs first sample"
+  if (!hasSample) {
+    const isOverAge = cropAgeMonths > STATUS_GATES.OVER_MATURE.maxAgeMonths;
+    const status = isOverAge ? 'Over-mature Risk' : 'Immature';
+    const statusDisplay = isOverAge ? 'Over-mature Risk' : 'No sample yet';
+    const recommendation = isOverAge
+      ? `URGENT: Crop age (${cropAgeMonths} mos) exceeds the 13.5-month maximum threshold and has no refractometer sample on record. Sample and schedule priority harvest immediately.`
+      : 'Needs first sample: No refractometer Brix reading has been logged for this lot yet. Collect top and bottom stalk juice samples to evaluate maturity.';
+
+    return {
+      ...lot,
+      cropAgeMonths,
+      expectedTcHa,
+      hasBrixSample: false,
+      isUnverifiedDefault: false,
+      needsAttention: 'Needs first sample',
+      topBrix: null,
+      bottomBrix: null,
+      lastSampled: null,
+      avgBrix: null,
+      brixDelta: null,
+      maturityRatio: null,
+      brixScore: null,
+      ratioScore: null,
+      ageScore,
+      readinessScore: null,
+      estimatedLkgTc: null,
+      estimatedTons,
+      totalSugarBagsLkg: null,
+      planterShareBags: null,
+      millShareBags: null,
+      estimatedTruckLoads,
+      apparentPurity: null,
+      recommendation,
+      harvestWindow: isOverAge ? 'Immediate (Over Age — Sample Now)' : 'Needs first sample',
+      status,
+      statusDisplay,
+    };
+  }
+
+  const topBrix = Number(lot.topBrix);
+  const bottomBrix = Number(lot.bottomBrix);
+  const avgBrix = Number(((topBrix + bottomBrix) / 2).toFixed(1));
+  const brixDelta = Number((topBrix - bottomBrix).toFixed(1));
+  const maturityRatio = Number((topBrix / bottomBrix).toFixed(2));
+
   const brixScore = Math.round(
     Math.min(100, Math.max(0, ((avgBrix - brix.minBrix) / brix.spanBrix) * 100))
   );
@@ -75,38 +172,43 @@ export function evaluateLotMetrics(lot) {
       avgBrix * yieldCfg.brixFactor * Math.min(yieldCfg.maxRatioCap, maturityRatio)
     ).toFixed(2)
   );
-  const estimatedTons = Math.round(
-    Number(lot.areaHa) * Number(lot.expectedTcHa || yieldCfg.defaultTcHa)
-  );
   const totalSugarBagsLkg = Math.round(estimatedTons * estimatedLkgTc);
   const planterShareBags = Math.round(totalSugarBagsLkg * yieldCfg.planterShare);
   const millShareBags = totalSugarBagsLkg - planterShareBags;
-  const estimatedTruckLoads = Math.max(
-    1,
-    Math.ceil(estimatedTons / yieldCfg.truckCapacityTons)
-  );
   const apparentPurity = Number(
     Math.min(92.5, Math.max(72.0, 74 + (avgBrix - 15) * 2.1 - ratioDiff * 12)).toFixed(1)
   );
 
   let status = 'Immature';
   let recommendation =
-    'Continue vegetative growth and monitor foliar nutrition. Schedule first refractometer check at 9.5 months.';
+    'Continue vegetative growth and monitor foliar nutrition. Schedule refractometer check as crop approaches 9.5 months.';
   let harvestWindow = 'In 60–90 Days';
+  let needsAttention = null;
 
-  if (
-    lot.cropAgeMonths > STATUS_GATES.OVER_MATURE.maxAgeMonths ||
-    maturityRatio > STATUS_GATES.OVER_MATURE.maxRatio
-  ) {
+  const isOverAge = cropAgeMonths > STATUS_GATES.OVER_MATURE.maxAgeMonths;
+  const isOverRatio = maturityRatio > STATUS_GATES.OVER_MATURE.maxRatio;
+  const isHighRatioWatch =
+    maturityRatio > STATUS_GATES.OK_TO_HARVEST.maxRatio &&
+    maturityRatio <= STATUS_GATES.OVER_MATURE.maxRatio;
+
+  // 1g. Accurate status and message logic for Over-mature (age vs ratio) and ratio 1.05-1.08
+  if (isOverAge || isOverRatio) {
     status = 'Over-mature Risk';
-    recommendation =
-      'URGENT: Top Brix exceeds Bottom Brix (Ratio > 1.08), indicating sucrose inversion risk. Issue priority cutting permit immediately.';
     harvestWindow = 'Immediate (Within 3–5 Days)';
+    needsAttention = isOverAge && !isOverRatio ? 'Over-mature (Over age)' : 'Over-mature / Inversion risk';
+
+    if (isOverAge && isOverRatio) {
+      recommendation = `URGENT: Crop age (${cropAgeMonths} mos) exceeds 13.5 months and T/B ratio (${maturityRatio}) exceeds 1.08. High stalk fiberization and sucrose inversion risk — issue priority cutting permit immediately.`;
+    } else if (isOverAge) {
+      recommendation = `URGENT: Crop is over age at ${cropAgeMonths} months (exceeds the 13.5-month limit). Prolonged field standing increases stalk pithiness and lodging — issue priority cutting permit immediately.`;
+    } else {
+      recommendation = `URGENT: Top Brix exceeds Bottom Brix (Ratio ${maturityRatio} > 1.08), indicating sucrose inversion risk. Issue priority cutting permit immediately.`;
+    }
   } else if (
     avgBrix >= STATUS_GATES.OK_TO_HARVEST.minAvgBrix &&
     maturityRatio >= STATUS_GATES.OK_TO_HARVEST.minRatio &&
     maturityRatio <= STATUS_GATES.OK_TO_HARVEST.maxRatio &&
-    lot.cropAgeMonths >= STATUS_GATES.OK_TO_HARVEST.minAgeMonths
+    cropAgeMonths >= STATUS_GATES.OK_TO_HARVEST.minAgeMonths
   ) {
     status = 'OK to Harvest';
     recommendation =
@@ -115,16 +217,32 @@ export function evaluateLotMetrics(lot) {
   } else if (
     avgBrix >= STATUS_GATES.APPROACHING.minAvgBrix &&
     maturityRatio >= STATUS_GATES.APPROACHING.minRatio &&
-    lot.cropAgeMonths >= STATUS_GATES.APPROACHING.minAgeMonths
+    cropAgeMonths >= STATUS_GATES.APPROACHING.minAgeMonths
   ) {
     status = 'Approaching';
-    recommendation =
-      'Bottom stalk has accumulated high sucrose while top internodes are still ripening. Withhold irrigation and re-sample in 7–10 days.';
     harvestWindow = 'In 10–21 Days';
+    if (isHighRatioWatch) {
+      recommendation = `Ratio high - watch for inversion (T/B ratio ${maturityRatio} is between 1.05 and 1.08). Re-sample stalk juice closely and prepare harvest dispatch.`;
+      needsAttention = 'Ratio high - watch for inversion';
+    } else {
+      recommendation =
+        'Bottom stalk has accumulated high sucrose while top internodes are still ripening. Withhold irrigation and re-sample in 7–10 days.';
+    }
+  } else if (isHighRatioWatch) {
+    recommendation = `Ratio high - watch for inversion (T/B ratio ${maturityRatio} is between 1.05 and 1.08). Verify stalk juice reading before scheduling harvest.`;
+    harvestWindow = 'Re-sample in 5–7 Days';
+    needsAttention = 'Ratio high - watch for inversion';
   }
 
   return {
     ...lot,
+    topBrix,
+    bottomBrix,
+    cropAgeMonths,
+    expectedTcHa,
+    hasBrixSample: true,
+    isUnverifiedDefault,
+    needsAttention,
     avgBrix,
     brixDelta,
     maturityRatio,
@@ -142,6 +260,7 @@ export function evaluateLotMetrics(lot) {
     recommendation,
     harvestWindow,
     status,
+    statusDisplay: status,
   };
 }
 
