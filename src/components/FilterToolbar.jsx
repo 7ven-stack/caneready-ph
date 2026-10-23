@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { Search, LayoutGrid, Map, Table, ArrowUpDown, X } from 'lucide-react';
 
 export default function FilterToolbar({
@@ -173,3 +173,4 @@ export default function FilterToolbar({
     </div>
   );
 }
+
