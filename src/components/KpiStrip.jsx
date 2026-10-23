@@ -1,8 +1,22 @@
 ﻿import React, { useState } from 'react';
-import { CheckCircle2, Clock, AlertTriangle, Layers } from 'lucide-react';
+import { CheckCircle2, Clock, AlertTriangle, Layers, CircleDot } from 'lucide-react';
 
-export default function KpiStrip({ lots, statusFilter, onSelectStatus }) {
-  const [mixMetric, setMixMetric] = useState('ha'); // 'ha' | 'tons'
+export default function KpiStrip({
+  lots = [],
+  statusFilter = 'ALL',
+  onSelectStatus,
+  isLoading = false,
+  error = null,
+}) {
+  const [mixMetric, setMixMetric] = useState('ha');
+
+  if (error) {
+    return (
+      <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-800 font-semibold">
+        Unable to compute district KPI summary: {error}
+      </div>
+    );
+  }
 
   const sumHa = (arr) =>
     Number(arr.reduce((sum, l) => sum + (Number(l.areaHa) || 0), 0).toFixed(2));
@@ -17,12 +31,6 @@ export default function KpiStrip({ lots, statusFilter, onSelectStatus }) {
   const riskLots = lots.filter((l) => l.status === 'Over-mature Risk');
   const immatureLots = lots.filter((l) => l.status === 'Immature');
 
-  const okHa = sumHa(okLots);
-  const okTons = sumTons(okLots);
-
-  const countPct = (arr) =>
-    lots.length > 0 ? Math.round((arr.length / lots.length) * 100) : 0;
-
   const metricPct = (arr) => {
     if (mixMetric === 'tons') {
       return totalTons > 0
@@ -32,139 +40,152 @@ export default function KpiStrip({ lots, statusFilter, onSelectStatus }) {
     return totalHa > 0 ? Number(((sumHa(arr) / totalHa) * 100).toFixed(1)) : 0;
   };
 
-  const formatSegmentTooltip = (label, arr) => {
+  const formatTooltip = (label, arr) => {
     const ha = sumHa(arr);
     const mt = sumTons(arr);
     const pct = metricPct(arr);
     return `${label}: ${arr.length} lot${arr.length === 1 ? '' : 's'} • ${ha} ha • ${mt.toLocaleString()} MT (${pct}%)`;
   };
 
-  const cards = [
+  // 2a. Zero counts are muted; red appears ONLY when Over-mature count > 0
+  const hasUrgent = riskLots.length > 0;
+
+  const chips = [
     {
       id: 'ALL',
-      title: 'Monitored Lots',
-      value: lots.length,
-      unit: 'Total Lots',
-      sub: `${totalHa} ha • ${totalTons.toLocaleString()} MT`,
-      pctLabel: '100%',
+      label: 'All Lots',
+      count: lots.length,
+      ha: totalHa,
+      mt: totalTons,
       icon: Layers,
-      accent: 'text-slate-700 bg-slate-100',
-      activeBorder: 'border-slate-900 ring-2 ring-slate-900/10 bg-white',
-      topBar: 'bg-slate-800',
+      barColor: 'bg-slate-700',
+      activeClass: 'border-slate-900 bg-slate-900 text-white shadow-xs',
+      idleClass: 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100',
+      iconClass: 'text-slate-600',
     },
     {
       id: 'OK to Harvest',
-      title: 'OK to Harvest',
-      value: okLots.length,
-      unit: 'Ready',
-      sub: `${okHa} ha • ${okTons.toLocaleString()} MT`,
-      pctLabel: `${countPct(okLots)}%`,
+      label: 'OK to Harvest',
+      count: okLots.length,
+      ha: sumHa(okLots),
+      mt: sumTons(okLots),
       icon: CheckCircle2,
-      accent: 'text-emerald-700 bg-emerald-50',
-      activeBorder: 'border-emerald-600 ring-2 ring-emerald-600/15 bg-emerald-50/10',
-      topBar: 'bg-emerald-600',
-    },
-    {
-      id: 'Approaching',
-      title: 'Approaching',
-      value: approachingLots.length,
-      unit: 'Near Maturity',
-      sub: `${sumHa(approachingLots)} ha • ${sumTons(approachingLots).toLocaleString()} MT`,
-      pctLabel: `${countPct(approachingLots)}%`,
-      icon: Clock,
-      accent: 'text-amber-700 bg-amber-50',
-      activeBorder: 'border-amber-500 ring-2 ring-amber-500/15 bg-amber-50/10',
-      topBar: 'bg-amber-500',
-    },
-    {
-      id: 'Over-mature Risk',
-      title: 'Over-Mature Risk',
-      value: riskLots.length,
-      unit: 'Urgent Cut',
-      sub: `${sumHa(riskLots)} ha • ${sumTons(riskLots).toLocaleString()} MT`,
-      pctLabel: `${countPct(riskLots)}%`,
-      icon: AlertTriangle,
-      accent: 'text-rose-700 bg-rose-50',
-      activeBorder: 'border-rose-600 ring-2 ring-rose-600/15 bg-rose-50/10',
-      topBar: 'bg-rose-600',
-    },
-  ];
-
-  const segments = [
-    {
-      id: 'OK to Harvest',
-      label: 'Ready',
-      arr: okLots,
-      color: 'bg-emerald-500',
-      dot: 'bg-emerald-500',
+      barColor: 'bg-emerald-500',
+      activeClass: 'border-emerald-700 bg-emerald-700 text-white shadow-xs',
+      idleClass:
+        okLots.length > 0
+          ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900 hover:bg-emerald-100/70'
+          : 'border-slate-200 bg-slate-50/60 text-slate-400 opacity-65',
+      iconClass: okLots.length > 0 ? 'text-emerald-600' : 'text-slate-400',
     },
     {
       id: 'Approaching',
       label: 'Approaching',
-      arr: approachingLots,
-      color: 'bg-amber-400',
-      dot: 'bg-amber-400',
+      count: approachingLots.length,
+      ha: sumHa(approachingLots),
+      mt: sumTons(approachingLots),
+      icon: Clock,
+      barColor: 'bg-amber-400',
+      activeClass: 'border-amber-600 bg-amber-600 text-white shadow-xs',
+      idleClass:
+        approachingLots.length > 0
+          ? 'border-amber-200 bg-amber-50/70 text-amber-900 hover:bg-amber-100/70'
+          : 'border-slate-200 bg-slate-50/60 text-slate-400 opacity-65',
+      iconClass: approachingLots.length > 0 ? 'text-amber-600' : 'text-slate-400',
     },
     {
       id: 'Over-mature Risk',
-      label: 'Urgent',
-      arr: riskLots,
-      color: 'bg-rose-500',
-      dot: 'bg-rose-500',
+      label: 'Over-mature',
+      count: riskLots.length,
+      ha: sumHa(riskLots),
+      mt: sumTons(riskLots),
+      icon: AlertTriangle,
+      barColor: hasUrgent ? 'bg-rose-500' : 'bg-slate-300',
+      activeClass: hasUrgent
+        ? 'border-rose-700 bg-rose-700 text-white shadow-xs'
+        : 'border-slate-700 bg-slate-700 text-white',
+      idleClass: hasUrgent
+        ? 'border-rose-200 bg-rose-50/80 text-rose-900 hover:bg-rose-100/70'
+        : 'border-slate-200 bg-slate-50/60 text-slate-400 opacity-65',
+      iconClass: hasUrgent ? 'text-rose-600' : 'text-slate-400',
     },
     {
       id: 'Immature',
       label: 'Immature / Unsampled',
-      arr: immatureLots,
-      color: 'bg-slate-400',
-      dot: 'bg-slate-400',
+      count: immatureLots.length,
+      ha: sumHa(immatureLots),
+      mt: sumTons(immatureLots),
+      icon: CircleDot,
+      barColor: 'bg-slate-400',
+      activeClass: 'border-slate-800 bg-slate-800 text-white shadow-xs',
+      idleClass:
+        immatureLots.length > 0
+          ? 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+          : 'border-slate-200 bg-slate-50/60 text-slate-400 opacity-65',
+      iconClass: 'text-slate-400',
     },
   ];
 
+  const segments = [
+    { id: 'OK to Harvest', label: 'OK to Harvest', arr: okLots, color: 'bg-emerald-500' },
+    { id: 'Approaching', label: 'Approaching', arr: approachingLots, color: 'bg-amber-400' },
+    ...(hasUrgent
+      ? [{ id: 'Over-mature Risk', label: 'Over-mature Risk', arr: riskLots, color: 'bg-rose-500' }]
+      : []),
+    { id: 'Immature', label: 'Immature / Unsampled', arr: immatureLots, color: 'bg-slate-400' },
+  ];
+
   return (
-    <section className="space-y-2.5">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {cards.map((card) => {
-          const Icon = card.icon;
-          const isActive = statusFilter === card.id;
+    <section className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-3 sm:p-3.5 shadow-2xs space-y-3">
+      {/* Compact Interactive KPI & Filter Chip Strip */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        {chips.map((chip) => {
+          const Icon = chip.icon;
+          const isActive = statusFilter === chip.id;
+          const isZero = chip.count === 0 && chip.id !== 'ALL';
 
           return (
             <button
-              key={card.id}
+              key={chip.id}
+              type="button"
               onClick={() =>
-                onSelectStatus(isActive && card.id !== 'ALL' ? 'ALL' : card.id)
+                onSelectStatus(isActive && chip.id !== 'ALL' ? 'ALL' : chip.id)
               }
+              title={formatTooltip(chip.label, chip.id === 'ALL' ? lots : lots.filter((l) => l.status === chip.id))}
               className={
-                'group relative text-left rounded-xl p-3.5 border transition-all overflow-hidden ' +
-                (isActive
-                  ? card.activeBorder + ' shadow-xs'
-                  : 'bg-white border-slate-200/90 hover:border-slate-300')
+                'relative text-left rounded-lg px-3 py-2.5 border transition-all flex flex-col justify-between overflow-hidden ' +
+                (isActive ? chip.activeClass : chip.idleClass)
               }
             >
-              <div className={'absolute top-0 left-0 right-0 h-1 ' + card.topBar} />
-
-              <div className="flex items-center justify-between gap-1 mb-1.5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 truncate">
-                  {card.title}
+              <div className="flex items-center justify-between gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider truncate">
+                  {chip.label}
                 </span>
-                <span className={'p-1.5 rounded-lg shrink-0 ' + card.accent}>
-                  <Icon className="w-3.5 h-3.5" />
-                </span>
+                <Icon
+                  className={
+                    'w-3.5 h-3.5 shrink-0 ' + (isActive ? 'text-white' : chip.iconClass)
+                  }
+                />
               </div>
 
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl font-black tracking-tight text-slate-900">
-                  {card.value}
+              <div className="mt-1 flex items-baseline justify-between gap-2">
+                <span
+                  className={
+                    'text-xl font-black tracking-tight ' +
+                    (isZero && !isActive ? 'text-slate-400 font-semibold' : '')
+                  }
+                >
+                  {isLoading && lots.length === 0 ? '—' : chip.count}
                 </span>
-                <span className="text-xs font-semibold text-slate-500">
-                  {card.unit}
-                </span>
-              </div>
-
-              <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-                <span className="truncate">{card.sub}</span>
-                <span className="font-semibold text-slate-600 shrink-0">
-                  {card.pctLabel}
+                <span
+                  className={
+                    'text-[11px] font-medium truncate ' +
+                    (isActive ? 'text-white/85' : 'text-slate-500')
+                  }
+                >
+                  {mixMetric === 'ha'
+                    ? `${chip.ha} ha`
+                    : `${chip.mt.toLocaleString()} MT`}
                 </span>
               </div>
             </button>
@@ -172,73 +193,68 @@ export default function KpiStrip({ lots, statusFilter, onSelectStatus }) {
         })}
       </div>
 
-      {/* 1d. District Readiness Mix Bar sized by Hectares or Est. Tonnage with rich tooltips */}
-      <div className="bg-white rounded-xl border border-slate-200/90 px-4 py-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-bold text-slate-700">District Readiness Mix:</span>
-          <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-slate-100 text-[11px]">
+      {/* Integrated Hectare / Tonnage Proportional Mix Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="font-bold text-slate-700 dark:text-slate-300">
+            Readiness Mix:
+          </span>
+          <div className="inline-flex rounded-md border border-slate-200 dark:border-slate-700 p-0.5 bg-slate-100 dark:bg-slate-800 text-[11px]">
             <button
               type="button"
               onClick={() => setMixMetric('ha')}
               className={
-                'px-2 py-0.5 rounded-md font-semibold transition-all ' +
+                'px-2 py-0.5 rounded font-semibold transition-all ' +
                 (mixMetric === 'ha'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900')
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-400')
               }
             >
-              By Hectares ({totalHa} ha)
+              {totalHa} ha
             </button>
             <button
               type="button"
               onClick={() => setMixMetric('tons')}
               className={
-                'px-2 py-0.5 rounded-md font-semibold transition-all ' +
+                'px-2 py-0.5 rounded font-semibold transition-all ' +
                 (mixMetric === 'tons'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900')
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-400')
               }
             >
-              By Est. Tonnage ({totalTons.toLocaleString()} MT)
+              {totalTons.toLocaleString()} MT
             </button>
           </div>
         </div>
 
-        <div className="flex-1 max-w-md w-full h-2.5 rounded-full bg-slate-100 overflow-hidden flex">
-          {segments.map((seg) => {
-            const widthPct = metricPct(seg.arr);
-            if (widthPct <= 0) return null;
-            return (
-              <div
-                key={seg.id}
-                style={{ width: widthPct + '%' }}
-                title={formatSegmentTooltip(seg.label, seg.arr)}
-                className={seg.color + ' h-full transition-all duration-300 cursor-help'}
-              />
-            );
-          })}
+        <div className="flex-1 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
+          {lots.length === 0 ? (
+            <div className="w-full h-full bg-slate-200 dark:bg-slate-800" />
+          ) : (
+            segments.map((seg) => {
+              const widthPct = metricPct(seg.arr);
+              if (widthPct <= 0) return null;
+              return (
+                <div
+                  key={seg.id}
+                  style={{ width: widthPct + '%' }}
+                  title={formatTooltip(seg.label, seg.arr)}
+                  onClick={() =>
+                    onSelectStatus(statusFilter === seg.id ? 'ALL' : seg.id)
+                  }
+                  className={
+                    seg.color +
+                    ' h-full transition-all duration-300 cursor-pointer hover:opacity-90'
+                  }
+                />
+              );
+            })
+          )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600 font-medium">
-          {segments.map((seg) => (
-            <span
-              key={seg.id}
-              title={formatSegmentTooltip(seg.label, seg.arr)}
-              className="inline-flex items-center gap-1 cursor-help"
-            >
-              <span className={'w-2 h-2 rounded-full ' + seg.dot} />
-              <span>
-                {seg.label}:{' '}
-                <strong className="text-slate-800">
-                  {mixMetric === 'ha'
-                    ? `${sumHa(seg.arr)} ha`
-                    : `${sumTons(seg.arr).toLocaleString()} MT`}
-                </strong>{' '}
-                ({seg.arr.length})
-              </span>
-            </span>
-          ))}
-        </div>
+        <span className="text-[11px] text-slate-500 shrink-0 hidden md:inline">
+          Hover bar for lots • ha • MT
+        </span>
       </div>
     </section>
   );

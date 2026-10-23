@@ -1,20 +1,34 @@
 ﻿import React, { useState, useEffect, useMemo } from 'react';
-import { X, MapPin, AlertCircle, Calendar, Info } from 'lucide-react';
+import { X, MapPin, AlertCircle, Info } from 'lucide-react';
 import { generateSequentialLotId } from '../services/lotService';
 import { computeCropAgeMonths, READINESS_CONFIG } from '../utils/caneCalculations';
 
-export function QuickBrixModal({ isOpen, onClose, lots, onUpdateBrix }) {
-  const [selectedLotId, setSelectedLotId] = useState(lots[0] ? lots[0].id : '');
+export function QuickBrixModal({
+  isOpen,
+  onClose,
+  lots = [],
+  onUpdateBrix,
+  preselectedLotId = null,
+}) {
+  const [selectedLotId, setSelectedLotId] = useState(
+    preselectedLotId || (lots[0] ? lots[0].id : '')
+  );
   const [topBrix, setTopBrix] = useState('');
   const [bottomBrix, setBottomBrix] = useState('');
 
   useEffect(() => {
-    if (isOpen && lots.length > 0 && !lots.some((l) => l.id === selectedLotId)) {
-      setSelectedLotId(lots[0].id);
+    if (isOpen) {
+      if (preselectedLotId && lots.some((l) => l.id === preselectedLotId)) {
+        setSelectedLotId(preselectedLotId);
+      } else if (lots.length > 0 && !lots.some((l) => l.id === selectedLotId)) {
+        setSelectedLotId(lots[0].id);
+      }
     }
-  }, [isOpen, lots, selectedLotId]);
+  }, [isOpen, preselectedLotId, lots, selectedLotId]);
 
   if (!isOpen) return null;
+
+  const selectedLot = lots.find((l) => l.id === selectedLotId) || null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -29,9 +43,16 @@ export function QuickBrixModal({ isOpen, onClose, lots, onUpdateBrix }) {
     <div className="fixed inset-0 z-[1100] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white dark:bg-slate-900 rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-200 dark:border-slate-800">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
-          <h3 className="text-base font-bold text-slate-900 dark:text-white">
-            Log Field Refractometer Sample
-          </h3>
+          <div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+              Log Field Refractometer Sample
+            </h3>
+            {selectedLot && (
+              <p className="text-xs text-emerald-700 dark:text-emerald-400 font-semibold mt-0.5">
+                Target: {selectedLot.id} — {selectedLot.hacienda} ({selectedLot.planter})
+              </p>
+            )}
+          </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <X className="w-5 h-5" />
           </button>
@@ -45,7 +66,7 @@ export function QuickBrixModal({ isOpen, onClose, lots, onUpdateBrix }) {
           <form onSubmit={handleSubmit} className="space-y-4 text-xs">
             <div>
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Select Farm Lot
+                Farm Lot
               </label>
               <select
                 value={selectedLotId}
@@ -54,7 +75,8 @@ export function QuickBrixModal({ isOpen, onClose, lots, onUpdateBrix }) {
               >
                 {lots.map((l) => (
                   <option key={l.id} value={l.id}>
-                    {l.id} — {l.hacienda} ({l.planter}){!l.hasBrixSample ? ' [No sample yet]' : ''}
+                    {l.id} — {l.hacienda} ({l.planter})
+                    {!l.hasBrixSample ? ' [No sample yet]' : ''}
                   </option>
                 ))}
               </select>
@@ -67,6 +89,8 @@ export function QuickBrixModal({ isOpen, onClose, lots, onUpdateBrix }) {
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
+                  autoFocus
                   step="0.1"
                   min="1"
                   max="32"
@@ -74,7 +98,7 @@ export function QuickBrixModal({ isOpen, onClose, lots, onUpdateBrix }) {
                   placeholder="e.g. 20.2"
                   value={topBrix}
                   onChange={(e) => setTopBrix(e.target.value)}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700"
+                  className="w-full px-3 py-2.5 text-sm font-bold rounded-lg border border-slate-300 dark:border-slate-700"
                 />
               </div>
               <div>
@@ -83,6 +107,7 @@ export function QuickBrixModal({ isOpen, onClose, lots, onUpdateBrix }) {
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.1"
                   min="1"
                   max="32"
@@ -90,7 +115,7 @@ export function QuickBrixModal({ isOpen, onClose, lots, onUpdateBrix }) {
                   placeholder="e.g. 20.6"
                   value={bottomBrix}
                   onChange={(e) => setBottomBrix(e.target.value)}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700"
+                  className="w-full px-3 py-2.5 text-sm font-bold rounded-lg border border-slate-300 dark:border-slate-700"
                 />
               </div>
             </div>
@@ -117,9 +142,6 @@ export function QuickBrixModal({ isOpen, onClose, lots, onUpdateBrix }) {
   );
 }
 
-// 1a. RegisterLotModal: No invented defaults. Brix optional & starts empty ("No sample yet"),
-// Planting / Last Cut Date required, Crop Age derived from date, expectedTcHa editable (default 75 labeled),
-// Soil Moisture optional, lastSampled stays null unless Brix is entered.
 export function RegisterLotModal({
   isOpen,
   onClose,
@@ -277,7 +299,6 @@ export function RegisterLotModal({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
-          {/* Row 1: Lot ID, Hacienda, Planter */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -319,7 +340,6 @@ export function RegisterLotModal({
             </div>
           </div>
 
-          {/* Row 2: Sector, Variety, Crop Class */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -368,7 +388,6 @@ export function RegisterLotModal({
             </div>
           </div>
 
-          {/* Row 3: Planting / Last Cut Date (Required) + Derived Age + Area + Expected TC/Ha */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -408,7 +427,8 @@ export function RegisterLotModal({
 
             <div>
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Expected TC/ha <span className="font-normal text-slate-400">(Default: {defaultTcHa})</span>
+                Expected TC/ha{' '}
+                <span className="font-normal text-slate-400">(Default: {defaultTcHa})</span>
               </label>
               <input
                 type="number"
@@ -423,7 +443,6 @@ export function RegisterLotModal({
             </div>
           </div>
 
-          {/* Row 4: Optional Brix Readings & Optional Soil Moisture */}
           <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-700 dark:text-slate-200">
@@ -442,6 +461,7 @@ export function RegisterLotModal({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.1"
                   min="1"
                   max="32"
@@ -458,6 +478,7 @@ export function RegisterLotModal({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.1"
                   min="1"
                   max="32"

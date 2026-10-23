@@ -11,6 +11,7 @@ import {
   MapPin,
   Droplets,
   CheckCircle2,
+  XCircle,
   Printer,
   ArrowRight,
   Gauge,
@@ -20,6 +21,7 @@ import {
   Trash2,
   User,
   AlertCircle,
+  Clock,
 } from 'lucide-react';
 import {
   evaluateLotMetrics,
@@ -35,6 +37,7 @@ export default function LotInspectorDrawer({
   onUpdateLotDetails,
   onDeleteLot,
   initialEditMode = false,
+  initialTab = 'overview',
 }) {
   const [renderedLot, setRenderedLot] = useState(lot);
   const [isVisible, setIsVisible] = useState(false);
@@ -94,10 +97,15 @@ export default function LotInspectorDrawer({
         soilMoisture: lot.soilMoisture || '',
       });
       setIsEditingInfo(Boolean(initialEditMode));
+      setActiveTab(initialTab || 'overview');
       setConfirmDelete(false);
-      setTopBrixInput(lot.topBrix !== null && lot.topBrix !== undefined ? String(lot.topBrix) : '');
+      setTopBrixInput(
+        lot.topBrix !== null && lot.topBrix !== undefined ? String(lot.topBrix) : ''
+      );
       setBottomBrixInput(
-        lot.bottomBrix !== null && lot.bottomBrix !== undefined ? String(lot.bottomBrix) : ''
+        lot.bottomBrix !== null && lot.bottomBrix !== undefined
+          ? String(lot.bottomBrix)
+          : ''
       );
       setScheduledDate(lot.dispatch ? lot.dispatch.scheduledDate : '2026-10-25');
       setQuedanTicket(
@@ -115,7 +123,7 @@ export default function LotInspectorDrawer({
       );
       setSavedBanner('');
     }
-  }, [lot, initialEditMode]);
+  }, [lot, initialEditMode, initialTab]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -141,14 +149,21 @@ export default function LotInspectorDrawer({
   if (!renderedLot) return null;
 
   const styles = getStatusStyles(renderedLot.status);
+  const bd = renderedLot.breakdown;
   const centroid =
     renderedLot.coordinates && renderedLot.coordinates[0]
-      ? renderedLot.coordinates[0][0].toFixed(4) + '° N, ' + renderedLot.coordinates[0][1].toFixed(4) + '° E'
+      ? renderedLot.coordinates[0][0].toFixed(4) +
+        '° N, ' +
+        renderedLot.coordinates[0][1].toFixed(4) +
+        '° E'
       : '10.8185° N, 123.0124° E';
 
   const handleSaveInfoSubmit = (e) => {
     e.preventDefault();
-    const derivedAge = computeCropAgeMonths(editForm.plantingDate, renderedLot.cropAgeMonths);
+    const derivedAge = computeCropAgeMonths(
+      editForm.plantingDate,
+      renderedLot.cropAgeMonths
+    );
     const cleanedUpdates = {
       hacienda: editForm.hacienda.trim() || renderedLot.hacienda,
       planter: editForm.planter.trim() || renderedLot.planter,
@@ -169,7 +184,11 @@ export default function LotInspectorDrawer({
 
   const handleBrixSubmit = (e) => {
     e.preventDefault();
-    onUpdateBrix(renderedLot.id, parseFloat(topBrixInput), parseFloat(bottomBrixInput));
+    onUpdateBrix(
+      renderedLot.id,
+      parseFloat(topBrixInput),
+      parseFloat(bottomBrixInput)
+    );
     setSavedBanner('Refractometer Brix sample updated & readiness recalculated.');
     setTimeout(() => setSavedBanner(''), 3500);
   };
@@ -190,7 +209,9 @@ export default function LotInspectorDrawer({
     <div
       className={
         'fixed inset-0 z-[1000] overflow-hidden flex justify-end transition-colors duration-300 ' +
-        (isVisible ? 'bg-slate-900/45 backdrop-blur-[2px]' : 'bg-slate-900/0 pointer-events-none')
+        (isVisible
+          ? 'bg-slate-900/45 backdrop-blur-[2px]'
+          : 'bg-slate-900/0 pointer-events-none')
       }
       onClick={onClose}
     >
@@ -235,7 +256,8 @@ export default function LotInspectorDrawer({
             <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
               <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
               <span>
-                Planter: <strong className="text-slate-800">{renderedLot.planter}</strong>
+                Planter:{' '}
+                <strong className="text-slate-800">{renderedLot.planter}</strong>
               </span>
               <span>•</span>
               <span>{renderedLot.sector}</span>
@@ -281,7 +303,7 @@ export default function LotInspectorDrawer({
             }
           >
             <FileText className="w-3.5 h-3.5" />
-            <span>Overview & Yield</span>
+            <span>Overview & Gates</span>
           </button>
           <button
             onClick={() => {
@@ -315,7 +337,7 @@ export default function LotInspectorDrawer({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {savedBanner && (
             <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center gap-2 animate-drawer-item">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -340,7 +362,9 @@ export default function LotInspectorDrawer({
                         Crop age is automatically derived from the planting / last cut date.
                       </p>
                     </div>
-                    <span className="font-mono font-bold text-slate-500">{renderedLot.id}</span>
+                    <span className="font-mono font-bold text-slate-500">
+                      {renderedLot.id}
+                    </span>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -353,7 +377,10 @@ export default function LotInspectorDrawer({
                         required
                         value={editForm.planter}
                         onChange={(e) =>
-                          setEditForm((prev) => ({ ...prev, planter: e.target.value }))
+                          setEditForm((prev) => ({
+                            ...prev,
+                            planter: e.target.value,
+                          }))
                         }
                         className="w-full px-3 py-2 text-sm font-semibold rounded-lg border border-slate-300 bg-white"
                       />
@@ -368,7 +395,10 @@ export default function LotInspectorDrawer({
                         required
                         value={editForm.hacienda}
                         onChange={(e) =>
-                          setEditForm((prev) => ({ ...prev, hacienda: e.target.value }))
+                          setEditForm((prev) => ({
+                            ...prev,
+                            hacienda: e.target.value,
+                          }))
                         }
                         className="w-full px-3 py-2 text-sm font-semibold rounded-lg border border-slate-300 bg-white"
                       />
@@ -383,7 +413,10 @@ export default function LotInspectorDrawer({
                       <select
                         value={editForm.sector}
                         onChange={(e) =>
-                          setEditForm((prev) => ({ ...prev, sector: e.target.value }))
+                          setEditForm((prev) => ({
+                            ...prev,
+                            sector: e.target.value,
+                          }))
                         }
                         className="w-full px-2.5 py-2 text-xs sm:text-sm font-medium rounded-lg border border-slate-300 bg-white"
                       >
@@ -401,7 +434,10 @@ export default function LotInspectorDrawer({
                       <select
                         value={editForm.variety}
                         onChange={(e) =>
-                          setEditForm((prev) => ({ ...prev, variety: e.target.value }))
+                          setEditForm((prev) => ({
+                            ...prev,
+                            variety: e.target.value,
+                          }))
                         }
                         className="w-full px-2.5 py-2 text-xs sm:text-sm font-medium rounded-lg border border-slate-300 bg-white"
                       >
@@ -419,7 +455,10 @@ export default function LotInspectorDrawer({
                       <select
                         value={editForm.cropClass}
                         onChange={(e) =>
-                          setEditForm((prev) => ({ ...prev, cropClass: e.target.value }))
+                          setEditForm((prev) => ({
+                            ...prev,
+                            cropClass: e.target.value,
+                          }))
                         }
                         className="w-full px-2.5 py-2 text-xs sm:text-sm font-medium rounded-lg border border-slate-300 bg-white"
                       >
@@ -443,7 +482,10 @@ export default function LotInspectorDrawer({
                         required
                         value={editForm.areaHa}
                         onChange={(e) =>
-                          setEditForm((prev) => ({ ...prev, areaHa: e.target.value }))
+                          setEditForm((prev) => ({
+                            ...prev,
+                            areaHa: e.target.value,
+                          }))
                         }
                         className="w-full px-2.5 py-2 text-sm font-bold rounded-lg border border-slate-300 bg-white"
                       />
@@ -460,7 +502,10 @@ export default function LotInspectorDrawer({
                         required
                         value={editForm.expectedTcHa}
                         onChange={(e) =>
-                          setEditForm((prev) => ({ ...prev, expectedTcHa: e.target.value }))
+                          setEditForm((prev) => ({
+                            ...prev,
+                            expectedTcHa: e.target.value,
+                          }))
                         }
                         className="w-full px-2.5 py-2 text-sm font-bold rounded-lg border border-slate-300 bg-white"
                       />
@@ -477,34 +522,14 @@ export default function LotInspectorDrawer({
                         required
                         value={editForm.plantingDate}
                         onChange={(e) =>
-                          setEditForm((prev) => ({ ...prev, plantingDate: e.target.value }))
+                          setEditForm((prev) => ({
+                            ...prev,
+                            plantingDate: e.target.value,
+                          }))
                         }
                         className="w-full px-2 py-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white"
                       />
-                      <span className="text-[10px] text-emerald-700 font-semibold">
-                        Derived Age: {computeCropAgeMonths(editForm.plantingDate, renderedLot.cropAgeMonths)} mos
-                      </span>
                     </div>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">
-                      Soil Moisture Status (Optional)
-                    </label>
-                    <select
-                      value={editForm.soilMoisture}
-                      onChange={(e) =>
-                        setEditForm((prev) => ({ ...prev, soilMoisture: e.target.value }))
-                      }
-                      className="w-full px-3 py-2 text-xs sm:text-sm font-medium rounded-lg border border-slate-300 bg-white"
-                    >
-                      <option value="">Not recorded</option>
-                      <option value="Optimal (18%)">Optimal (18%)</option>
-                      <option value="Optimal (19%)">Optimal (19%)</option>
-                      <option value="Moderate (22%)">Moderate (22%)</option>
-                      <option value="Dry (14%)">Dry (14%)</option>
-                      <option value="High (26%)">High (26%)</option>
-                    </select>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200">
@@ -559,101 +584,132 @@ export default function LotInspectorDrawer({
                 </form>
               )}
 
-              {/* 1. Overall Score + 3-Pillar Weighted Breakdown */}
-              <div
-                style={{ animationDelay: '0ms' }}
-                className="p-4 rounded-xl bg-slate-50/90 border border-slate-200 space-y-3.5 animate-drawer-item"
-              >
+              {/* 2c. "Why this status?" Gate Checklist + 2d. Estimated Ready Date */}
+              <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-3 animate-drawer-item">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                  <span className="text-xs font-extrabold text-slate-900">
+                    Why this status? ({renderedLot.statusDisplay || renderedLot.status})
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <Clock className="w-3.5 h-3.5" />
+                    Est. Ready: {renderedLot.estimatedReady?.label}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 text-xs">
+                  {renderedLot.gateChecklist?.map((gate) => (
+                    <div
+                      key={gate.key}
+                      className="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-100"
+                    >
+                      <div className="flex items-center gap-2">
+                        {gate.passed ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        ) : (
+                          <XCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                        )}
+                        <span className="font-semibold text-slate-800">
+                          {gate.summary}
+                        </span>
+                      </div>
+                      <span
+                        className={
+                          'text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ' +
+                          (gate.passed
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800')
+                        }
+                      >
+                        {gate.passed ? 'Pass' : 'Unmet'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {renderedLot.estimatedReady?.reason && (
+                  <p className="text-[11px] text-slate-500 pt-1">
+                    {renderedLot.estimatedReady.reason}
+                  </p>
+                )}
+              </div>
+
+              {/* 2c. Readiness index & breakdown object */}
+              <div className="p-4 rounded-xl bg-slate-50/90 border border-slate-200 space-y-3.5 animate-drawer-item">
                 <div>
                   <div className="flex items-center justify-between text-xs mb-1.5">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
                       <Gauge className="w-4 h-4 text-emerald-700" />
-                      Overall Harvest Readiness Score
+                      Readiness index
                     </span>
                     <span className="text-sm font-extrabold text-slate-900">
                       {renderedLot.hasBrixSample
-                        ? `${renderedLot.readinessScore} / 100`
-                        : 'No sample yet (Needs first sample)'}
+                        ? `${renderedLot.readinessScore}% (${renderedLot.readinessScore} / 100)`
+                        : 'No sample yet'}
                     </span>
                   </div>
                   <div className="w-full h-3 rounded-full bg-slate-200 overflow-hidden">
                     {renderedLot.hasBrixSample && (
                       <div
-                        className={'h-full rounded-full transition-all duration-700 ease-out ' + styles.bar}
-                        style={{ width: (animateBars ? renderedLot.readinessScore : 0) + '%' }}
+                        className={
+                          'h-full rounded-full transition-all duration-700 ease-out ' +
+                          styles.bar
+                        }
+                        style={{
+                          width:
+                            (animateBars ? renderedLot.readinessScore : 0) + '%',
+                        }}
                       />
                     )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2.5 pt-2 border-t border-slate-200/80 text-[11px]">
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200/70">
-                    <div className="flex justify-between text-slate-500 font-medium">
-                      <span>Brix Level</span>
-                      <span className="font-bold text-slate-800">
-                        {renderedLot.hasBrixSample ? `${renderedLot.brixScore}%` : '—'}
-                      </span>
+                {bd && (
+                  <div className="grid grid-cols-3 gap-2.5 pt-2 border-t border-slate-200/80 text-[11px]">
+                    <div className="bg-white p-2.5 rounded-lg border border-slate-200/70">
+                      <div className="flex justify-between text-slate-500 font-medium">
+                        <span>Brix ({bd.brix.weight}%)</span>
+                        <span className="font-bold text-slate-800">
+                          {bd.brix.score !== null ? `${bd.brix.score}%` : '—'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-emerald-700 font-semibold mt-1">
+                        {bd.brix.weighted !== null
+                          ? `+${bd.brix.weighted} pts (${bd.brix.label})`
+                          : bd.brix.label}
+                      </div>
                     </div>
-                    <div className="w-full h-1.5 rounded-full bg-slate-100 mt-1.5 overflow-hidden">
-                      {renderedLot.hasBrixSample && (
-                        <div
-                          className="h-full bg-emerald-600 transition-all duration-700"
-                          style={{ width: (animateBars ? renderedLot.brixScore : 0) + '%' }}
-                        />
-                      )}
-                    </div>
-                    <div className="text-[10px] text-slate-400 mt-1">
-                      {renderedLot.hasBrixSample
-                        ? `Weight: 45% (Avg ${renderedLot.avgBrix}°)`
-                        : 'Weight: 45% (No sample)'}
-                    </div>
-                  </div>
 
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200/70">
-                    <div className="flex justify-between text-slate-500 font-medium">
-                      <span>T/B Equilibrium</span>
-                      <span className="font-bold text-slate-800">
-                        {renderedLot.hasBrixSample ? `${renderedLot.ratioScore}%` : '—'}
-                      </span>
+                    <div className="bg-white p-2.5 rounded-lg border border-slate-200/70">
+                      <div className="flex justify-between text-slate-500 font-medium">
+                        <span>Ratio ({bd.ratio.weight}%)</span>
+                        <span className="font-bold text-slate-800">
+                          {bd.ratio.score !== null ? `${bd.ratio.score}%` : '—'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-emerald-700 font-semibold mt-1">
+                        {bd.ratio.weighted !== null
+                          ? `+${bd.ratio.weighted} pts (${bd.ratio.label})`
+                          : bd.ratio.label}
+                      </div>
                     </div>
-                    <div className="w-full h-1.5 rounded-full bg-slate-100 mt-1.5 overflow-hidden">
-                      {renderedLot.hasBrixSample && (
-                        <div
-                          className="h-full bg-teal-600 transition-all duration-700"
-                          style={{ width: (animateBars ? renderedLot.ratioScore : 0) + '%' }}
-                        />
-                      )}
-                    </div>
-                    <div className="text-[10px] text-slate-400 mt-1">
-                      {renderedLot.hasBrixSample
-                        ? `Weight: 35% (${renderedLot.maturityRatio} Ratio)`
-                        : 'Weight: 35% (No sample)'}
-                    </div>
-                  </div>
 
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200/70">
-                    <div className="flex justify-between text-slate-500 font-medium">
-                      <span>Crop Age</span>
-                      <span className="font-bold text-slate-800">{renderedLot.ageScore}%</span>
-                    </div>
-                    <div className="w-full h-1.5 rounded-full bg-slate-100 mt-1.5 overflow-hidden">
-                      <div
-                        className="h-full bg-cyan-600 transition-all duration-700"
-                        style={{ width: (animateBars ? renderedLot.ageScore : 0) + '%' }}
-                      />
-                    </div>
-                    <div className="text-[10px] text-slate-400 mt-1">
-                      Weight: 20% ({renderedLot.cropAgeMonths} mos)
+                    <div className="bg-white p-2.5 rounded-lg border border-slate-200/70">
+                      <div className="flex justify-between text-slate-500 font-medium">
+                        <span>Age ({bd.age.weight}%)</span>
+                        <span className="font-bold text-slate-800">
+                          {bd.age.score}%
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-emerald-700 font-semibold mt-1">
+                        +{bd.age.weighted} pts ({bd.age.label})
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
 
-              {/* 2. Agronomist Recommendation Callout */}
-              <div
-                style={{ animationDelay: '60ms' }}
-                className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs text-emerald-950 space-y-1 animate-drawer-item"
-              >
+              {/* Agronomist Recommendation Callout */}
+              <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs text-emerald-950 space-y-1 animate-drawer-item">
                 <div className="flex items-center justify-between">
                   <span className="font-bold flex items-center gap-1.5 text-emerald-900">
                     <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
@@ -668,11 +724,8 @@ export default function LotInspectorDrawer({
                 </p>
               </div>
 
-              {/* 3. Core Agronomic Grid */}
-              <div
-                style={{ animationDelay: '120ms' }}
-                className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs animate-drawer-item"
-              >
+              {/* Core Agronomic Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs animate-drawer-item">
                 <div
                   onClick={() => setIsEditingInfo(true)}
                   className="p-3 rounded-xl border border-slate-200 bg-white hover:border-emerald-500/60 cursor-pointer transition-colors"
@@ -684,8 +737,12 @@ export default function LotInspectorDrawer({
                     </span>
                     <Pencil className="w-3 h-3 text-slate-300" />
                   </span>
-                  <p className="font-extrabold text-slate-900 mt-1">{renderedLot.variety}</p>
-                  <span className="text-[10px] text-slate-400">{renderedLot.cropClass} Cycle</span>
+                  <p className="font-extrabold text-slate-900 mt-1">
+                    {renderedLot.variety}
+                  </p>
+                  <span className="text-[10px] text-slate-400">
+                    {renderedLot.cropClass} Cycle
+                  </span>
                 </div>
 
                 <div
@@ -724,7 +781,9 @@ export default function LotInspectorDrawer({
                     {renderedLot.soilMoisture || 'Not recorded'}
                   </p>
                   <span className="text-[10px] text-slate-400">
-                    {renderedLot.lastSampled ? `Sampled ${renderedLot.lastSampled}` : 'No sample yet'}
+                    {renderedLot.lastSampled
+                      ? `Sampled ${renderedLot.lastSampled}`
+                      : 'No sample yet'}
                   </span>
                 </div>
 
@@ -769,8 +828,12 @@ export default function LotInspectorDrawer({
                     </>
                   ) : (
                     <>
-                      <p className="font-extrabold text-amber-700 mt-1">No sample yet</p>
-                      <span className="text-[10px] text-slate-400">Click to log 1st sample</span>
+                      <p className="font-extrabold text-amber-700 mt-1">
+                        No sample yet
+                      </p>
+                      <span className="text-[10px] text-slate-400">
+                        Click to log 1st sample
+                      </span>
                     </>
                   )}
                 </div>
@@ -789,28 +852,31 @@ export default function LotInspectorDrawer({
                   <p className="font-mono font-bold text-[11px] text-slate-900 mt-1 truncate">
                     {centroid}
                   </p>
-                  <span className="text-[10px] text-slate-400">{renderedLot.sector}</span>
+                  <span className="text-[10px] text-slate-400">
+                    {renderedLot.sector}
+                  </span>
                 </div>
               </div>
 
-              {/* 4. Mill Production & Sugar Quedan Projection */}
-              <div
-                style={{ animationDelay: '180ms' }}
-                className="p-4 rounded-xl border border-slate-200 bg-gradient-to-br from-slate-900 to-slate-800 text-white space-y-3 animate-drawer-item"
-              >
+              {/* Mill Production & Sugar Quedan Projection */}
+              <div className="p-4 rounded-xl border border-slate-200 bg-gradient-to-br from-slate-900 to-slate-800 text-white space-y-3 animate-drawer-item">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
                     <Scale className="w-4 h-4" />
                     Mill Sugar Recovery & Quedan Projection
                   </span>
                   <span className="text-xs font-mono bg-white/10 px-2 py-0.5 rounded text-emerald-300">
-                    {renderedLot.hasBrixSample ? `${renderedLot.estimatedLkgTc} LKg/TC` : 'Needs Brix Sample'}
+                    {renderedLot.hasBrixSample
+                      ? `${renderedLot.estimatedLkgTc} LKg/TC`
+                      : 'Needs Brix Sample'}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-3 gap-3 pt-1">
                   <div className="bg-white/5 p-3 rounded-lg border border-white/10">
-                    <div className="text-[11px] text-slate-300">Total 50kg Sugar Bags</div>
+                    <div className="text-[11px] text-slate-300">
+                      Total 50kg Sugar Bags
+                    </div>
                     <div className="text-lg font-extrabold text-white mt-0.5">
                       {renderedLot.hasBrixSample
                         ? `${renderedLot.totalSugarBagsLkg.toLocaleString()} LKg`
@@ -822,21 +888,29 @@ export default function LotInspectorDrawer({
                   </div>
 
                   <div className="bg-white/5 p-3 rounded-lg border border-white/10">
-                    <div className="text-[11px] text-slate-300">Planter Quedan (70%)</div>
+                    <div className="text-[11px] text-slate-300">
+                      Planter Quedan (70%)
+                    </div>
                     <div className="text-lg font-extrabold text-emerald-400 mt-0.5">
                       {renderedLot.hasBrixSample
                         ? `${renderedLot.planterShareBags.toLocaleString()} Bags`
                         : '—'}
                     </div>
-                    <div className="text-[10px] text-slate-400">Net Planter Allocation</div>
+                    <div className="text-[10px] text-slate-400">
+                      Net Planter Allocation
+                    </div>
                   </div>
 
                   <div className="bg-white/5 p-3 rounded-lg border border-white/10">
-                    <div className="text-[11px] text-slate-300">Hauling Requirement</div>
+                    <div className="text-[11px] text-slate-300">
+                      Hauling Requirement
+                    </div>
                     <div className="text-lg font-extrabold text-amber-300 mt-0.5">
                       ~{renderedLot.estimatedTruckLoads} Trips
                     </div>
-                    <div className="text-[10px] text-slate-400">At 18 MT / 10-Wheeler</div>
+                    <div className="text-[10px] text-slate-400">
+                      At 18 MT / 10-Wheeler
+                    </div>
                   </div>
                 </div>
               </div>
@@ -846,10 +920,7 @@ export default function LotInspectorDrawer({
           {activeTab === 'brix' && (
             <div key="brix-tab" className="space-y-4">
               {renderedLot.hasBrixSample ? (
-                <div
-                  style={{ animationDelay: '0ms' }}
-                  className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3 animate-drawer-item"
-                >
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3 animate-drawer-item">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-bold text-slate-800">
                       Stalk Sucrose Gradient (Top vs. Bottom Internodes)
@@ -866,12 +937,18 @@ export default function LotInspectorDrawer({
                         <span className="text-slate-600 font-medium">
                           Top Internodes (Upper 1/3 Stalk)
                         </span>
-                        <span className="font-bold text-slate-900">{renderedLot.topBrix}° Brix</span>
+                        <span className="font-bold text-slate-900">
+                          {renderedLot.topBrix}° Brix
+                        </span>
                       </div>
                       <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
                         <div
                           className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                          style={{ width: Math.min(100, (renderedLot.topBrix / 24) * 100) + '%' }}
+                          style={{
+                            width:
+                              Math.min(100, (renderedLot.topBrix / 24) * 100) +
+                              '%',
+                          }}
                         />
                       </div>
                     </div>
@@ -889,7 +966,9 @@ export default function LotInspectorDrawer({
                         <div
                           className="h-full bg-emerald-700 rounded-full transition-all duration-500"
                           style={{
-                            width: Math.min(100, (renderedLot.bottomBrix / 24) * 100) + '%',
+                            width:
+                              Math.min(100, (renderedLot.bottomBrix / 24) * 100) +
+                              '%',
                           }}
                         />
                       </div>
@@ -898,13 +977,13 @@ export default function LotInspectorDrawer({
                 </div>
               ) : (
                 <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 font-semibold">
-                  No refractometer sample has been recorded for {renderedLot.id} yet. Enter the first Top and Bottom stalk Brix readings below.
+                  No refractometer sample has been recorded for {renderedLot.id}{' '}
+                  yet. Enter the first Top and Bottom stalk Brix readings below.
                 </div>
               )}
 
               <form
                 onSubmit={handleBrixSubmit}
-                style={{ animationDelay: '80ms' }}
                 className="p-4 rounded-xl border border-slate-200 bg-white space-y-4 animate-drawer-item"
               >
                 <div className="text-xs font-bold text-slate-800">
@@ -918,6 +997,7 @@ export default function LotInspectorDrawer({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.1"
                       min="1"
                       max="32"
@@ -934,6 +1014,7 @@ export default function LotInspectorDrawer({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.1"
                       min="1"
                       max="32"
@@ -967,9 +1048,11 @@ export default function LotInspectorDrawer({
                       </div>
                     </div>
                     <div>
-                      <div className="text-[10px] text-slate-500">New Score</div>
+                      <div className="text-[10px] text-slate-500">
+                        Readiness index
+                      </div>
                       <div className="font-extrabold text-emerald-800">
-                        {simulatedMetrics.readinessScore}/100
+                        {simulatedMetrics.readinessScore}%
                       </div>
                     </div>
                   </div>
@@ -989,7 +1072,6 @@ export default function LotInspectorDrawer({
             <div key="dispatch-tab" className="space-y-4">
               <form
                 onSubmit={handleDispatchSubmit}
-                style={{ animationDelay: '0ms' }}
                 className="p-4 rounded-xl border border-slate-200 bg-white space-y-3.5 animate-drawer-item"
               >
                 <div className="text-xs font-bold text-slate-800">
@@ -1060,10 +1142,7 @@ export default function LotInspectorDrawer({
                 </button>
               </form>
 
-              <div
-                style={{ animationDelay: '90ms' }}
-                className="p-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 space-y-3 text-xs animate-drawer-item"
-              >
+              <div className="p-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 space-y-3 text-xs animate-drawer-item">
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                   <div>
                     <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
@@ -1092,7 +1171,9 @@ export default function LotInspectorDrawer({
                   </div>
                   <div>
                     <span className="text-slate-500">Planter:</span>{' '}
-                    <strong className="text-slate-900">{renderedLot.planter}</strong>
+                    <strong className="text-slate-900">
+                      {renderedLot.planter}
+                    </strong>
                   </div>
                   <div>
                     <span className="text-slate-500">Target Cut Date:</span>{' '}
@@ -1105,7 +1186,8 @@ export default function LotInspectorDrawer({
                   <div>
                     <span className="text-slate-500">Est. Total Trips:</span>{' '}
                     <strong className="text-slate-900">
-                      {renderedLot.estimatedTruckLoads} Loads ({assignedTrucks} Trucks/Day)
+                      {renderedLot.estimatedTruckLoads} Loads ({assignedTrucks}{' '}
+                      Trucks/Day)
                     </strong>
                   </div>
                   <div>
@@ -1114,7 +1196,10 @@ export default function LotInspectorDrawer({
                       ~
                       {Math.max(
                         1,
-                        Math.ceil(renderedLot.estimatedTruckLoads / (Number(assignedTrucks) * 2))
+                        Math.ceil(
+                          renderedLot.estimatedTruckLoads /
+                            (Number(assignedTrucks) * 2)
+                        )
                       )}{' '}
                       Days
                     </strong>
@@ -1130,7 +1215,9 @@ export default function LotInspectorDrawer({
             {renderedLot.dispatch ? (
               <span>
                 Scheduled:{' '}
-                <strong className="text-emerald-700">{renderedLot.dispatch.scheduledDate}</strong>
+                <strong className="text-emerald-700">
+                  {renderedLot.dispatch.scheduledDate}
+                </strong>
               </span>
             ) : (
               <span>No cutting brigade dispatched yet</span>
