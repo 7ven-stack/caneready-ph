@@ -1,7 +1,6 @@
 ﻿import React from 'react';
 import {
   Search,
-  LayoutGrid,
   Map,
   Table,
   ArrowUpDown,
@@ -12,9 +11,12 @@ import {
 export default function FilterToolbar({
   searchQuery,
   onSearchChange,
-  sectorFilter,
-  onSectorChange,
-  sectors,
+  cityFilter,
+  onCityChange,
+  cities = [],
+  associationFilter,
+  onAssociationChange,
+  associations = [],
   sortBy,
   onSortChange,
   viewMode,
@@ -29,12 +31,14 @@ export default function FilterToolbar({
   const hasActiveFilters =
     searchQuery.trim() !== '' ||
     statusFilter !== 'ALL' ||
-    sectorFilter !== 'ALL';
+    cityFilter !== 'ALL' ||
+    associationFilter !== 'ALL';
 
   const handleReset = () => {
     onSearchChange('');
     onStatusFilterChange('ALL');
-    onSectorChange('ALL');
+    onCityChange('ALL');
+    onAssociationChange('ALL');
   };
 
   return (
@@ -46,7 +50,7 @@ export default function FilterToolbar({
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search by Lot ID (e.g. LOT-167), Hacienda, Planter, or Variety..."
+            placeholder="Search by Planter, Contact No., Hacienda, Brgy., City, or Association..."
             className="w-full pl-10 pr-9 py-2 text-xs sm:text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
           />
           {searchQuery && (
@@ -61,14 +65,27 @@ export default function FilterToolbar({
 
         <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2">
           <select
-            value={sectorFilter}
-            onChange={(e) => onSectorChange(e.target.value)}
-            className="text-xs sm:text-sm rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600"
+            value={cityFilter}
+            onChange={(e) => onCityChange(e.target.value)}
+            className="text-xs sm:text-sm rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600"
           >
-            <option value="ALL">All Mill Sectors</option>
-            {sectors.map((sec) => (
-              <option key={sec} value={sec}>
-                {sec}
+            <option value="ALL">All Cities</option>
+            {cities.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={associationFilter}
+            onChange={(e) => onAssociationChange(e.target.value)}
+            className="text-xs sm:text-sm rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600"
+          >
+            <option value="ALL">All Associations</option>
+            {associations.map((assoc) => (
+              <option key={assoc} value={assoc}>
+                {assoc}
               </option>
             ))}
           </select>
@@ -80,11 +97,10 @@ export default function FilterToolbar({
               onChange={(e) => onSortChange(e.target.value)}
               className="text-xs sm:text-sm bg-transparent text-slate-700 dark:text-slate-200 font-medium focus:outline-none"
             >
-              <option value="priority">Sort: Status Priority & Readiness</option>
-              <option value="readiness">Sort: Readiness Index</option>
-              <option value="brix">Sort: Average Brix</option>
-              <option value="age">Sort: Crop Age</option>
-              <option value="area">Sort: Area (Ha)</option>
+              <option value="harvestDate">Sort: Nearest Harvest Date</option>
+              <option value="area">Sort: Hectarage (Ha)</option>
+              <option value="planter">Sort: Planter Name</option>
+              <option value="city">Sort: City / Municipality</option>
             </select>
           </div>
 
@@ -107,7 +123,7 @@ export default function FilterToolbar({
               type="button"
               onClick={() => onViewModeChange('table')}
               className={
-                'inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md text-xs font-semibold transition-all ' +
+                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ' +
                 (viewMode === 'table'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white')
@@ -118,22 +134,9 @@ export default function FilterToolbar({
             </button>
             <button
               type="button"
-              onClick={() => onViewModeChange('cards')}
-              className={
-                'inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md text-xs font-semibold transition-all ' +
-                (viewMode === 'cards'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white')
-              }
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>Cards</span>
-            </button>
-            <button
-              type="button"
               onClick={() => onViewModeChange('map')}
               className={
-                'inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md text-xs font-semibold transition-all ' +
+                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ' +
                 (viewMode === 'map'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white')
@@ -149,10 +152,20 @@ export default function FilterToolbar({
       <div className="flex items-center justify-between pt-2 mt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500">
         <span>
           Showing <strong className="text-slate-800 dark:text-white">{filteredCount}</strong> of{' '}
-          {allLots.length} monitored lots
+          {allLots.length} planter lots
           {statusFilter !== 'ALL' && (
             <span className="ml-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
-              • Filtered by: {statusFilter}
+              • Status: {statusFilter}
+            </span>
+          )}
+          {cityFilter !== 'ALL' && (
+            <span className="ml-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
+              • City: {cityFilter}
+            </span>
+          )}
+          {associationFilter !== 'ALL' && (
+            <span className="ml-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
+              • Association: {associationFilter}
             </span>
           )}
         </span>

@@ -6,7 +6,6 @@ import {
   createFarmLot,
   updateLotDetails,
   deleteFarmLot,
-  updateLotBrixSample,
   updateLotBoundary,
   updateLotDispatch,
   loadCachedLots,
@@ -19,11 +18,10 @@ import Navbar from './components/Navbar';
 import KpiStrip from './components/KpiStrip';
 import NeedsAttentionPanel from './components/NeedsAttentionPanel';
 import FilterToolbar from './components/FilterToolbar';
-import LotCardGrid from './components/LotCardGrid';
 import ParcelMapView from './components/ParcelMapView';
 import PlanterTableView from './components/PlanterTableView';
 import LotInspectorDrawer from './components/LotInspectorDrawer';
-import { QuickBrixModal, RegisterLotModal } from './components/Modals';
+import { SetHarvestDateModal, RegisterLotModal } from './components/Modals';
 
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => {
@@ -41,30 +39,44 @@ export default function App() {
   const [isOfflineCopy, setIsOfflineCopy] = useState(false);
   const [pendingOps, setPendingOps] = useState(() => getPendingOperations());
   const [toast, setToast] = useState(null);
+  const [isToastLeaving, setIsToastLeaving] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
-  const [sectorFilter, setSectorFilter] = useState('ALL');
-  // 2e. Default sort = status priority (Over-mature, OK to Harvest, Approaching, Immature), then readiness index
-  const [sortBy, setSortBy] = useState('priority');
-  // 2f. Table is default on desktop (>= 768px), Cards on mobile
-  const [viewMode, setViewMode] = useState(() =>
-    typeof window !== 'undefined' && window.innerWidth < 768 ? 'cards' : 'table'
-  );
+  const [cityFilter, setCityFilter] = useState('ALL');
+  const [associationFilter, setAssociationFilter] = useState('ALL');
+  const [sortBy, setSortBy] = useState('harvestDate');
+  const [viewMode, setViewMode] = useState('table');
   const [density, setDensity] = useState('compact');
 
   const [selectedLotId, setSelectedLotId] = useState(null);
   const [openDrawerInEditMode, setOpenDrawerInEditMode] = useState(false);
   const [drawerInitialTab, setDrawerInitialTab] = useState('overview');
-  const [isBrixModalOpen, setIsBrixModalOpen] = useState(false);
-  const [brixModalLotId, setBrixModalLotId] = useState(null);
+
+  const [scheduleModalLotId, setScheduleModalLotId] = useState(null);
   const [isNewLotModalOpen, setIsNewLotModalOpen] = useState(false);
   const [pendingPolygonCoords, setPendingPolygonCoords] = useState(null);
   const [pendingPolygonAreaHa, setPendingPolygonAreaHa] = useState(null);
+  const [pendingPolygonLat, setPendingPolygonLat] = useState(null);
+  const [pendingPolygonLng, setPendingPolygonLng] = useState(null);
 
   const showToast = useCallback((type, title, message) => {
+    setIsToastLeaving(false);
     setToast({ id: Date.now(), type, title, message });
   }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const fadeTimer = setTimeout(() => setIsToastLeaving(true), 3800);
+    const removeTimer = setTimeout(() => {
+      setToast(null);
+      setIsToastLeaving(false);
+    }, 4300);
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(removeTimer);
+    };
+  }, [toast]);
 
   useEffect(() => {
     const rootEl = document.documentElement;
@@ -141,9 +153,15 @@ export default function App() {
     [rawLots, pendingLotIds]
   );
 
-  const sectors = useMemo(
-    () => Array.from(new Set(rawLots.map((l) => l.sector))),
-    [rawLots]
+  const cities = useMemo(
+    () => Array.from(new Set(evaluatedLots.map((l) => l.city).filter(Boolean))),
+    [evaluatedLots]
+  );
+
+  const associations = useMemo(
+    () =>
+      Array.from(new Set(evaluatedLots.map((l) => l.association).filter(Boolean))),
+    [evaluatedLots]
   );
 
   const filteredLots = useMemo(() => {
@@ -151,46 +169,57 @@ export default function App() {
       .filter((lot) => {
         const matchesStatus =
           statusFilter === 'ALL' || lot.status === statusFilter;
-        const matchesSector =
-          sectorFilter === 'ALL' || lot.sector === sectorFilter;
+        const matchesCity = cityFilter === 'ALL' || lot.city === cityFilter;
+        const matchesAssoc =
+          associationFilter === 'ALL' || lot.association === associationFilter;
         const q = searchQuery.toLowerCase();
         const matchesQuery =
           !q ||
           lot.id.toLowerCase().includes(q) ||
-          lot.hacienda.toLowerCase().includes(q) ||
           lot.planter.toLowerCase().includes(q) ||
-          lot.variety.toLowerCase().includes(q);
+          String(lot.contactNumber || '').toLowerCase().includes(q) ||
+          String(lot.association || '').toLowerCase().includes(q) ||
+          lot.hacienda.toLowerCase().includes(q) ||
+          String(lot.barangay || '').toLowerCase().includes(q) ||
+          String(lot.city || '').toLowerCase().includes(q) ||
+          lot.coordText.toLowerCase().includes(q);
 
-        return matchesStatus && matchesSector && matchesQuery;
+        return matchesStatus && matchesCity && matchesAssoc && matchesQuery;
       })
       .sort((a, b) => {
-        if (sortBy === 'priority') {
-          const pDiff = (a.statusPriority ?? 4) - (b.statusPriority ?? 4);
-          if (pDiff !== 0) return pDiff;
-          return (b.readinessScore ?? -1) - (a.readinessScore ?? -1);
+        if (sortBy === 'harvestDate') {
+          const dA = a.plannedHarvestDate || '9999-12-31';
+          const dB = b.plannedHarvestDate || '9999-12-31';
+          if (dA !== dB) return dA.localeCompare(dB);
+          return b.areaHa - a.areaHa;
         }
-        if (sortBy === 'brix') return (b.avgBrix ?? -1) - (a.avgBrix ?? -1);
-        if (sortBy === 'age') return b.cropAgeMonths - a.cropAgeMonths;
         if (sortBy === 'area') return b.areaHa - a.areaHa;
-        return (b.readinessScore ?? -1) - (a.readinessScore ?? -1);
+        if (sortBy === 'planter') return a.planter.localeCompare(b.planter);
+        if (sortBy === 'city') return String(a.city).localeCompare(String(b.city));
+        return 0;
       });
-  }, [evaluatedLots, statusFilter, sectorFilter, searchQuery, sortBy]);
+  }, [
+    evaluatedLots,
+    statusFilter,
+    cityFilter,
+    associationFilter,
+    searchQuery,
+    sortBy,
+  ]);
 
   const selectedLot = useMemo(
     () => evaluatedLots.find((l) => l.id === selectedLotId) || null,
     [evaluatedLots, selectedLotId]
   );
 
-  const handleQuickLogBrix = useCallback((lot) => {
-    setBrixModalLotId(lot ? lot.id : null);
-    setIsBrixModalOpen(true);
-  }, []);
+  const scheduleModalLot = useMemo(
+    () => evaluatedLots.find((l) => l.id === scheduleModalLotId) || null,
+    [evaluatedLots, scheduleModalLotId]
+  );
 
   const handleQuickScheduleCut = useCallback((lot) => {
     if (!lot) return;
-    setOpenDrawerInEditMode(false);
-    setDrawerInitialTab('dispatch');
-    setSelectedLotId(lot.id);
+    setScheduleModalLotId(lot.id);
   }, []);
 
   const handleAddLot = async (newLot) => {
@@ -201,7 +230,7 @@ export default function App() {
     if (!res.ok) {
       if (res.code === '23505') {
         setRawLots(previousLots);
-        showToast('error', 'Duplicate Lot ID (PK Conflict)', res.error);
+        showToast('error', 'Duplicate Lot ID', res.error);
         return res;
       }
 
@@ -216,7 +245,7 @@ export default function App() {
       showToast(
         'warning',
         `Saved "${newLot.id}" as Pending`,
-        `${res.error}. Queued in local storage and will sync when online.`
+        `${res.error}. Queued locally and will sync when online.`
       );
       return res;
     }
@@ -226,7 +255,9 @@ export default function App() {
     );
     setPendingPolygonCoords(null);
     setPendingPolygonAreaHa(null);
-    showToast('success', 'Lot Registered', `${newLot.id} saved to ${res.source}.`);
+    setPendingPolygonLat(null);
+    setPendingPolygonLng(null);
+    showToast('success', 'Planter Lot Registered', `${newLot.id} saved to ${res.source}.`);
     return res;
   };
 
@@ -251,7 +282,7 @@ export default function App() {
       showToast(
         'warning',
         `Edit Queued as Pending (${lotId})`,
-        `${res.error}. Your edit is marked pending and survives reload.`
+        `${res.error}. Marked pending and survives reload.`
       );
       return res;
     }
@@ -261,7 +292,7 @@ export default function App() {
         lot.id === lotId ? { ...lot, pendingSync: false } : lot
       )
     );
-    showToast('success', 'Planter Info Synced', `${lotId} updated in ${res.source}.`);
+    showToast('success', 'Planter Info Updated', `${lotId} synced to ${res.source}.`);
     return res;
   };
 
@@ -281,7 +312,7 @@ export default function App() {
       showToast(
         'warning',
         `Delete Pending (${lotId})`,
-        `${res.error}. Deletion queued until database policy/connection allows it.`
+        `${res.error}. Deletion queued.`
       );
       return res;
     }
@@ -290,64 +321,14 @@ export default function App() {
     return res;
   };
 
-  const handleUpdateBrix = async (lotId, topBrix, bottomBrix) => {
-    const today = new Date().toISOString().split('T')[0];
-    setRawLots((prev) =>
-      prev.map((lot) => {
-        if (lot.id !== lotId) return lot;
-        const prevHistory = Array.isArray(lot.brixHistory)
-          ? lot.brixHistory
-          : lot.topBrix && lot.bottomBrix
-          ? [
-              {
-                topBrix: lot.topBrix,
-                bottomBrix: lot.bottomBrix,
-                sampledAt: lot.lastSampled || today,
-              },
-            ]
-          : [];
-        return {
-          ...lot,
-          topBrix,
-          bottomBrix,
-          lastSampled: today,
-          sampleVerified: true,
-          brixHistory: [
-            ...prevHistory,
-            { topBrix, bottomBrix, sampledAt: today },
-          ],
-          pendingSync: true,
-        };
-      })
-    );
-
-    const res = await updateLotBrixSample(lotId, topBrix, bottomBrix, today);
-    if (!res.ok) {
-      const nextQueue = enqueuePendingOperation({
-        type: 'UPDATE_BRIX',
-        lotId,
-        payload: { topBrix, bottomBrix, lastSampled: today },
-        lastError: res.error,
-      });
-      setPendingOps(nextQueue);
-      showToast(
-        'warning',
-        `Brix Sample Marked Pending (${lotId})`,
-        `${res.error}. Saved locally and queued for retry.`
-      );
-      return res;
-    }
-
-    setRawLots((prev) =>
-      prev.map((lot) =>
-        lot.id === lotId ? { ...lot, pendingSync: false } : lot
-      )
-    );
-    showToast('success', 'Brix Sample Saved', `${lotId} synced to ${res.source}.`);
-    return res;
-  };
-
-  const handleUpdateLotBoundary = async (lotId, newCoords, newAreaHa) => {
+  const handleUpdateLotBoundary = async (
+    lotId,
+    newCoords,
+    newAreaHa,
+    newLat,
+    newLng
+  ) => {
+    const existingLot = evaluatedLots.find((l) => l.id === lotId) || null;
     setRawLots((prev) =>
       prev.map((lot) =>
         lot.id === lotId
@@ -355,25 +336,39 @@ export default function App() {
               ...lot,
               coordinates: newCoords,
               areaHa: newAreaHa ?? lot.areaHa,
+              latitude: newLat ?? lot.latitude,
+              longitude: newLng ?? lot.longitude,
               pendingSync: true,
             }
           : lot
       )
     );
 
-    const res = await updateLotBoundary(lotId, newCoords, newAreaHa);
+    const res = await updateLotBoundary(
+      lotId,
+      newCoords,
+      newAreaHa,
+      newLat,
+      newLng,
+      existingLot
+    );
     if (!res.ok) {
       const nextQueue = enqueuePendingOperation({
         type: 'UPDATE_BOUNDARY',
         lotId,
-        payload: { coordinates: newCoords, areaHa: newAreaHa },
+        payload: {
+          coordinates: newCoords,
+          areaHa: newAreaHa,
+          latitude: newLat,
+          longitude: newLng,
+        },
         lastError: res.error,
       });
       setPendingOps(nextQueue);
       showToast(
         'warning',
         `Polygon Edit Pending (${lotId})`,
-        `${res.error}. Boundary saved locally and queued for sync.`
+        `${res.error}. Saved locally and queued.`
       );
       return res;
     }
@@ -383,13 +378,20 @@ export default function App() {
         lot.id === lotId ? { ...lot, pendingSync: false } : lot
       )
     );
-    showToast('success', 'Polygon Boundary Saved', `${lotId} synced to ${res.source}.`);
+    showToast('success', 'Field Boundary & Lat/Lng Saved', `${lotId} synced to ${res.source}.`);
     return res;
   };
 
-  const handleCreateLotFromPolygon = (drawnCoords, calculatedAreaHa) => {
+  const handleCreateLotFromPolygon = (
+    drawnCoords,
+    calculatedAreaHa,
+    centroidLat,
+    centroidLng
+  ) => {
     setPendingPolygonCoords(drawnCoords);
     setPendingPolygonAreaHa(calculatedAreaHa);
+    setPendingPolygonLat(centroidLat);
+    setPendingPolygonLng(centroidLng);
     setIsNewLotModalOpen(true);
   };
 
@@ -397,7 +399,13 @@ export default function App() {
     setRawLots((prev) =>
       prev.map((lot) =>
         lot.id === lotId
-          ? { ...lot, dispatch: dispatchData, pendingSync: true }
+          ? {
+              ...lot,
+              plannedHarvestDate: dispatchData?.scheduledDate || null,
+              harvestNotes: dispatchData?.notes || '',
+              dispatch: { ...lot.dispatch, ...dispatchData },
+              pendingSync: true,
+            }
           : lot
       )
     );
@@ -413,7 +421,7 @@ export default function App() {
       setPendingOps(nextQueue);
       showToast(
         'warning',
-        `Dispatch Order Pending (${lotId})`,
+        `Harvest Date Pending (${lotId})`,
         `${res.error}. Queued for automatic retry.`
       );
       return res;
@@ -424,24 +432,32 @@ export default function App() {
         lot.id === lotId ? { ...lot, pendingSync: false } : lot
       )
     );
-    showToast('success', 'Dispatch Order Synced', `${lotId} saved to ${res.source}.`);
+    showToast(
+      'success',
+      'Planned Harvest Date Saved',
+      dispatchData?.scheduledDate
+        ? `${lotId} scheduled for ${dispatchData.scheduledDate}.`
+        : `${lotId} harvest date cleared.`
+    );
     return res;
   };
 
-  const handleBulkScheduleHarvest = async (lotIds, { scheduledDate, brigadeLeader }) => {
+  const handleBulkScheduleHarvest = async (lotIds, { scheduledDate, notes }) => {
     for (const id of lotIds) {
-      const ticket = 'QDN-2026-' + Math.floor(1000 + Math.random() * 9000);
+      const lotObj = evaluatedLots.find((l) => l.id === id);
       await handleSaveDispatch(id, {
         scheduledDate,
-        quedanTicket: ticket,
-        brigadeLeader,
-        assignedTrucks: 4,
+        notes: notes || '',
+        contactNumber: lotObj?.contactNumber || '',
+        association: lotObj?.association || 'APSSI',
+        barangay: lotObj?.barangay || '',
+        city: lotObj?.city || 'Silay City',
       });
     }
     showToast(
       'success',
-      'Bulk Harvest Scheduled',
-      `Scheduled ${lotIds.length} lot(s) for ${scheduledDate}.`
+      'Bulk Harvest Date Applied',
+      `Set planned harvest date (${scheduledDate}) for ${lotIds.length} lot(s).`
     );
   };
 
@@ -457,46 +473,34 @@ export default function App() {
 
     const headers = [
       'Lot ID',
+      'Planter Name',
+      'Contact Number',
+      "Planter's Association",
       'Hacienda',
-      'Planter',
-      'Sector',
-      'Variety',
-      'Crop Class',
-      'Planting / Cut Date',
-      'Area (Ha)',
-      'Crop Age (Mos)',
-      'Top Brix',
-      'Bottom Brix',
-      'Avg Brix',
-      'Maturity Ratio',
-      'Est. LKg/TC',
-      'Est. Tons',
-      'Readiness Index',
-      'Last Sampled',
-      'Scheduled Date',
-      'Status',
+      'Barangay (Brgy.)',
+      'City',
+      'Field Hectarage (Ha)',
+      'Planned Date of Harvest',
+      'Schedule Status',
+      'Latitude',
+      'Longitude',
+      'Planter Notes',
     ];
 
     const rows = filteredLots.map((l) => [
       l.id,
-      l.hacienda,
       l.planter,
-      l.sector,
-      l.variety,
-      l.cropClass,
-      l.plantingDate || '',
+      l.contactNumber,
+      l.association,
+      l.hacienda,
+      l.barangay,
+      l.city,
       l.areaHa,
-      l.cropAgeMonths,
-      l.hasBrixSample ? l.topBrix : 'No sample yet',
-      l.hasBrixSample ? l.bottomBrix : 'No sample yet',
-      l.hasBrixSample ? l.avgBrix : 'No sample yet',
-      l.hasBrixSample ? l.maturityRatio : '',
-      l.hasBrixSample ? l.estimatedLkgTc : '',
-      l.estimatedTons,
-      l.hasBrixSample ? l.readinessScore : '',
-      l.hasBrixSample && l.lastSampled ? l.lastSampled : 'No sample yet',
-      l.dispatch?.scheduledDate || '',
-      l.statusDisplay || l.status,
+      l.plannedHarvestDate || 'Not set',
+      l.status,
+      l.latitude,
+      l.longitude,
+      l.harvestNotes || '',
     ]);
 
     const nl = String.fromCharCode(13, 10);
@@ -512,7 +516,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', 'caneready_lots_report.csv');
+    link.setAttribute('download', 'planter_harvest_schedule_report.csv');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -520,15 +524,18 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 transition-colors">
+    <div
+      className={
+        'flex flex-col bg-slate-50 text-slate-900 transition-colors ' +
+        (viewMode === 'map' ? 'h-screen overflow-hidden' : 'min-h-screen')
+      }
+    >
       <Navbar
-        onOpenBrixModal={() => {
-          setBrixModalLotId(null);
-          setIsBrixModalOpen(true);
-        }}
         onOpenNewLotModal={() => {
           setPendingPolygonCoords(null);
           setPendingPolygonAreaHa(null);
+          setPendingPolygonLat(null);
+          setPendingPolygonLng(null);
           setIsNewLotModalOpen(true);
         }}
         dataSource={dataSource}
@@ -537,9 +544,18 @@ export default function App() {
         onExportCsv={handleExportCsv}
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode((prev) => !prev)}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        lots={evaluatedLots}
+        onQuickScheduleCut={handleQuickScheduleCut}
+        onSelectLot={(lot) => {
+          setOpenDrawerInEditMode(false);
+          setDrawerInitialTab('overview');
+          setSelectedLotId(lot.id);
+        }}
       />
 
-      {(isOfflineCopy || pendingOps.length > 0) && (
+      {viewMode === 'table' && (isOfflineCopy || pendingOps.length > 0) && (
         <div className="bg-amber-50 dark:bg-amber-950/70 border-b border-amber-200 dark:border-amber-800 px-3 sm:px-6 lg:px-8 py-2 text-xs">
           <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-semibold">
@@ -557,7 +573,7 @@ export default function App() {
                 {pendingOps.length > 0
                   ? `${pendingOps.length} unsynced change(s) marked pending (${pendingOps
                       .map((o) => o.lotId)
-                      .join(', ')}). Will replay automatically when connection/permissions are restored.`
+                      .join(', ')}).`
                   : 'Database unreachable — displaying local offline copy.'}
               </span>
             </div>
@@ -575,7 +591,14 @@ export default function App() {
       )}
 
       {toast && (
-        <div className="fixed bottom-4 right-4 z-[1200] max-w-sm w-full bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 p-4 flex items-start gap-3">
+        <div
+          className={
+            'fixed top-16 right-4 z-[1200] max-w-sm w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 p-4 flex items-start gap-3 transition-all duration-500 transform ' +
+            (isToastLeaving
+              ? 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+              : 'opacity-100 translate-y-0 scale-100')
+          }
+        >
           {toast.type === 'error' || toast.type === 'warning' ? (
             <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
           ) : (
@@ -599,17 +622,78 @@ export default function App() {
         </div>
       )}
 
-      <main className="flex-1 max-w-[1440px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 space-y-3.5">
-        <KpiStrip
-          lots={evaluatedLots}
-          statusFilter={statusFilter}
-          onSelectStatus={setStatusFilter}
-          isLoading={isLoading}
-        />
+      {/* FULL-SCREEN MAP MODE vs. DASHBOARD TABLE MODE */}
+      {viewMode === 'map' ? (
+        <main className="flex-1 min-h-0 w-full flex flex-col overflow-hidden">
+          <ParcelMapView
+            lots={evaluatedLots}
+            onSelectLot={(lot) => {
+              setOpenDrawerInEditMode(false);
+              setDrawerInitialTab('overview');
+              setSelectedLotId(lot.id);
+            }}
+            onUpdateLotBoundary={handleUpdateLotBoundary}
+            onCreateLotFromPolygon={handleCreateLotFromPolygon}
+          />
+        </main>
+      ) : (
+        <main className="flex-1 max-w-[1440px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 space-y-3.5">
+          <KpiStrip
+            lots={evaluatedLots}
+            statusFilter={statusFilter}
+            onSelectStatus={setStatusFilter}
+            isLoading={isLoading}
+          />
 
+          <FilterToolbar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            cityFilter={cityFilter}
+            onCityChange={setCityFilter}
+            cities={cities}
+            associationFilter={associationFilter}
+            onAssociationChange={setAssociationFilter}
+            associations={associations}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
+            allLots={evaluatedLots}
+            filteredCount={filteredLots.length}
+            density={density}
+            onDensityChange={setDensity}
+          />
+
+          {isLoading && evaluatedLots.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-12 text-center text-xs text-slate-500">
+              Loading planter lots...
+            </div>
+          ) : (
+            <PlanterTableView
+              lots={filteredLots}
+              density={density}
+              onSelectLot={(lot) => {
+                setOpenDrawerInEditMode(false);
+                setDrawerInitialTab('overview');
+                setSelectedLotId(lot.id);
+              }}
+              onEditLot={(lot) => {
+                setOpenDrawerInEditMode(true);
+                setDrawerInitialTab('overview');
+                setSelectedLotId(lot.id);
+              }}
+              onQuickScheduleCut={handleQuickScheduleCut}
+              onBulkScheduleHarvest={handleBulkScheduleHarvest}
+            />
+          )}
+        </main>
+      )}
+
+      {viewMode === 'table' && (
         <NeedsAttentionPanel
           lots={evaluatedLots}
-          onQuickLogBrix={handleQuickLogBrix}
           onQuickScheduleCut={handleQuickScheduleCut}
           onSelectLot={(lot) => {
             setOpenDrawerInEditMode(false);
@@ -618,74 +702,7 @@ export default function App() {
           }}
           isLoading={isLoading}
         />
-
-        <FilterToolbar
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          sectorFilter={sectorFilter}
-          onSectorChange={setSectorFilter}
-          sectors={sectors}
-          sortBy={sortBy}
-          onSortChange={setSortBy}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-          statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
-          allLots={evaluatedLots}
-          filteredCount={filteredLots.length}
-          density={density}
-          onDensityChange={setDensity}
-        />
-
-        {isLoading && evaluatedLots.length === 0 ? (
-          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-12 text-center text-xs text-slate-500">
-            Loading sugarcane lots...
-          </div>
-        ) : (
-          <>
-            {viewMode === 'cards' && (
-              <LotCardGrid
-                lots={filteredLots}
-                onSelectLot={(lot) => {
-                  setOpenDrawerInEditMode(false);
-                  setDrawerInitialTab('overview');
-                  setSelectedLotId(lot.id);
-                }}
-                onQuickLogBrix={handleQuickLogBrix}
-                onQuickScheduleCut={handleQuickScheduleCut}
-              />
-            )}
-
-            {viewMode === 'map' && (
-              <ParcelMapView
-                lots={filteredLots}
-                onSelectLot={(lot) => {
-                  setOpenDrawerInEditMode(false);
-                  setDrawerInitialTab('overview');
-                  setSelectedLotId(lot.id);
-                }}
-                onUpdateLotBoundary={handleUpdateLotBoundary}
-                onCreateLotFromPolygon={handleCreateLotFromPolygon}
-              />
-            )}
-
-            {viewMode === 'table' && (
-              <PlanterTableView
-                lots={filteredLots}
-                density={density}
-                onSelectLot={(lot) => {
-                  setOpenDrawerInEditMode(false);
-                  setDrawerInitialTab('overview');
-                  setSelectedLotId(lot.id);
-                }}
-                onQuickLogBrix={handleQuickLogBrix}
-                onQuickScheduleCut={handleQuickScheduleCut}
-                onBulkScheduleHarvest={handleBulkScheduleHarvest}
-              />
-            )}
-          </>
-        )}
-      </main>
+      )}
 
       <LotInspectorDrawer
         lot={selectedLot}
@@ -698,19 +715,14 @@ export default function App() {
         }}
         onUpdateLotDetails={handleUpdateLotDetails}
         onDeleteLot={handleDeleteLot}
-        onUpdateBrix={handleUpdateBrix}
         onSaveDispatch={handleSaveDispatch}
       />
 
-      <QuickBrixModal
-        isOpen={isBrixModalOpen}
-        onClose={() => {
-          setIsBrixModalOpen(false);
-          setBrixModalLotId(null);
-        }}
-        lots={evaluatedLots}
-        preselectedLotId={brixModalLotId}
-        onUpdateBrix={handleUpdateBrix}
+      <SetHarvestDateModal
+        isOpen={Boolean(scheduleModalLot)}
+        lot={scheduleModalLot}
+        onClose={() => setScheduleModalLotId(null)}
+        onSaveDispatch={handleSaveDispatch}
       />
 
       <RegisterLotModal
@@ -719,12 +731,19 @@ export default function App() {
           setIsNewLotModalOpen(false);
           setPendingPolygonCoords(null);
           setPendingPolygonAreaHa(null);
+          setPendingPolygonLat(null);
+          setPendingPolygonLng(null);
         }}
         onAddLot={handleAddLot}
         existingLots={evaluatedLots}
         initialCoordinates={pendingPolygonCoords}
         initialAreaHa={pendingPolygonAreaHa}
+        initialLatitude={pendingPolygonLat}
+        initialLongitude={pendingPolygonLng}
       />
     </div>
   );
 }
+
+
+

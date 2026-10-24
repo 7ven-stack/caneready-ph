@@ -1,6 +1,10 @@
 ﻿import { createClient } from '@supabase/supabase-js';
 import { INITIAL_LOTS } from '../data/initialLots';
-import { computeCropAgeMonths } from '../utils/caneCalculations';
+import {
+  computeCropAgeMonths,
+  computeCentroidLatLng,
+  buildPolygonFromLatLng,
+} from '../utils/caneCalculations';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -18,8 +22,7 @@ export function safeJsonParse(raw, fallback = null) {
   if (typeof raw !== 'string' || !raw.trim()) return fallback;
   try {
     return JSON.parse(raw);
-  } catch (err) {
-    console.warn('[CaneReadyPH] Corrupted JSON in storage, using fallback:', err.message);
+  } catch {
     return fallback;
   }
 }
@@ -40,9 +43,7 @@ export function saveCachedLots(lots) {
     if (Array.isArray(lots)) {
       localStorage.setItem(LOTS_CACHE_KEY, JSON.stringify(lots));
     }
-  } catch (err) {
-    console.warn('[CaneReadyPH] Failed to cache lots:', err.message);
-  }
+  } catch {}
 }
 
 export function getPendingOperations() {
@@ -58,15 +59,14 @@ export function getPendingOperations() {
 export function savePendingOperations(ops) {
   try {
     localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(ops));
-  } catch (err) {
-    console.warn('[CaneReadyPH] Failed to persist pending ops:', err.message);
-  }
+  } catch {}
 }
 
 export function enqueuePendingOperation(op) {
   const current = getPendingOperations();
   const filtered = current.filter(
-    (item) => !(item.lotId === op.lotId && item.type === op.type && op.type !== 'CREATE_LOT')
+    (item) =>
+      !(item.lotId === op.lotId && item.type === op.type && op.type !== 'CREATE_LOT')
   );
   const entry = {
     opId:
@@ -81,17 +81,15 @@ export function enqueuePendingOperation(op) {
   return next;
 }
 
-export function generateSequentialLotId(existingLots = [], sector = 'Sector A - North') {
-  const sectorMatch = String(sector).match(/Sector\s+([A-Z])/i);
-  const letter = sectorMatch ? sectorMatch[1].toUpperCase() : 'A';
-  const sectorBase = { A: 100, B: 200, C: 300, D: 400 }[letter] || 100;
-
-  let maxNum = sectorBase;
-  const prefixRegex = new RegExp('^LOT-' + letter + '(\\d+)$', 'i');
+export function generateSequentialLotId(existingLots = [], cityOrSector = 'Silay City') {
+  const match = String(cityOrSector).match(/^([A-Z])/i);
+  const letter = match ? match[1].toUpperCase() : 'A';
+  let maxNum = 100;
+  const regex = /^LOT-[A-Z](\d+)$/i;
 
   for (const lot of existingLots) {
     if (!lot?.id) continue;
-    const m = String(lot.id).trim().match(prefixRegex);
+    const m = String(lot.id).trim().match(regex);
     if (m) {
       const n = parseInt(m[1], 10);
       if (!isNaN(n) && n > maxNum) maxNum = n;
@@ -108,7 +106,7 @@ export function generateSequentialLotId(existingLots = [], sector = 'Sector A - 
   return candidate;
 }
 
-function parseCoordinates(row) {
+function parseCoordinates(row, labelPos, areaHa) {
   if (Array.isArray(row.coordinates) && row.coordinates.length >= 3) {
     return row.coordinates;
   }
@@ -116,47 +114,99 @@ function parseCoordinates(row) {
     const parsed = safeJsonParse(row.svg_points, null);
     if (Array.isArray(parsed) && parsed.length >= 3) return parsed;
   }
+  if (labelPos && Number.isFinite(Number(labelPos.lat)) && Number.isFinite(Number(labelPos.lng))) {
+    return buildPolygonFromLatLng(Number(labelPos.lat), Number(labelPos.lng), areaHa);
+  }
   const fallback = INITIAL_LOTS.find((l) => l.id === row.id);
   return fallback ? fallback.coordinates : null;
 }
 
-function toNullableNumber(val) {
-  if (val === null || val === undefined || val === '') return null;
-  const num = Number(val);
-  return Number.isFinite(num) ? num : null;
-}
-
-// 1b & 1c. Preserve null on top_brix / bottom_brix / last_sampled / soil_moisture and compute age from planting_date
 function fromSqlRow(row) {
-  const plantingDate = row.planting_date ?? row.plantingDate ?? null;
-  const storedAge = toNullableNumber(row.crop_age_months ?? row.cropAgeMonths);
+  const fallbackSeed = INITIAL_LOTS.find((l) => l.id === row.id) || {};
+  const plantingDate = row.planting_date ?? row.plantingDate ?? '2025-11-01';
+  const storedAge = Number(row.crop_age_months ?? row.cropAgeMonths ?? 0);
   const cropAgeMonths = computeCropAgeMonths(plantingDate, storedAge);
+  const areaHa = Number(row.area_ha ?? row.areaHa ?? 0);
 
-  const topBrix = toNullableNumber(row.top_brix ?? row.topBrix);
-  const bottomBrix = toNullableNumber(row.bottom_brix ?? row.bottomBrix);
-  const hasSample = topBrix !== null && bottomBrix !== null;
+  const labelPos =
+    typeof row.label_pos === 'string'
+      ? safeJsonParse(row.label_pos, null)
+      : row.label_pos ?? null;
+
+  const dispatchObj =
+    typeof row.dispatch === 'string'
+      ? safeJsonParse(row.dispatch, null)
+      : row.dispatch ?? null;
+
+  const coordinates = parseCoordinates(row, labelPos, areaHa);
+  const centroid = computeCentroidLatLng({
+    coordinates,
+    latitude: row.latitude ?? labelPos?.lat,
+    longitude: row.longitude ?? labelPos?.lng,
+  });
+
+  const contactNumber =
+    row.contactNumber ??
+    row.contact_number ??
+    labelPos?.contactNumber ??
+    dispatchObj?.contactNumber ??
+    fallbackSeed.contactNumber ??
+    '';
+
+  const association =
+    row.association ??
+    labelPos?.association ??
+    dispatchObj?.association ??
+    fallbackSeed.association ??
+    'APSSI';
+
+  const barangay =
+    row.barangay ??
+    labelPos?.barangay ??
+    dispatchObj?.barangay ??
+    fallbackSeed.barangay ??
+    'Brgy. Hawaiian';
+
+  const city =
+    row.city ??
+    labelPos?.city ??
+    dispatchObj?.city ??
+    fallbackSeed.city ??
+    'Silay City';
+
+  const plannedHarvestDate =
+    row.plannedHarvestDate ?? dispatchObj?.scheduledDate ?? null;
+  const harvestNotes =
+    row.harvestNotes ?? dispatchObj?.notes ?? dispatchObj?.brigadeLeader ?? '';
 
   return {
     id: row.id,
     hacienda: row.hacienda,
     planter: row.planter,
-    sector: row.sector,
-    variety: row.variety,
-    cropClass: row.crop_class ?? row.cropClass,
-    areaHa: Number(row.area_ha ?? row.areaHa ?? 0),
+    contactNumber,
+    association,
+    barangay,
+    city,
+    sector: row.sector || `${city} (${barangay})`,
+    variety: row.variety || 'Phil 2006-2289',
+    cropClass: row.crop_class ?? row.cropClass ?? 'Plant Cane',
+    areaHa,
     expectedTcHa: Number(row.expected_tc_ha ?? row.expectedTcHa ?? 75),
     plantingDate,
     cropAgeMonths,
-    topBrix,
-    bottomBrix,
-    soilMoisture: row.soil_moisture ?? row.soilMoisture ?? null,
-    lastSampled: hasSample ? (row.last_sampled ?? row.lastSampled ?? null) : null,
-    sampleVerified: Boolean(row.sampleVerified),
-    coordinates: parseCoordinates(row),
-    dispatch:
-      typeof row.dispatch === 'string'
-        ? safeJsonParse(row.dispatch, null)
-        : row.dispatch ?? null,
+    plannedHarvestDate,
+    harvestNotes,
+    latitude: centroid.latitude,
+    longitude: centroid.longitude,
+    coordinates,
+    dispatch: {
+      scheduledDate: plannedHarvestDate,
+      notes: harvestNotes,
+      contactNumber,
+      association,
+      barangay,
+      city,
+    },
   };
 }
 
@@ -172,33 +222,28 @@ export function mergeLotsWithPendingOps(remoteLots, pendingOps = getPendingOpera
   for (const op of pendingOps) {
     const { type, lotId, payload } = op;
     if (type === 'CREATE_LOT' && payload) {
-      lotMap.set(lotId, { ...fromSqlRow(payload), pendingSync: true, lastSyncError: op.lastError });
+      lotMap.set(lotId, { ...fromSqlRow(payload), pendingSync: true });
     } else if (type === 'DELETE_LOT') {
       lotMap.delete(lotId);
     } else if (lotMap.has(lotId)) {
       const current = lotMap.get(lotId);
       if (type === 'UPDATE_DETAILS') {
         lotMap.set(lotId, { ...current, ...payload, pendingSync: true });
-      } else if (type === 'UPDATE_BRIX') {
-        lotMap.set(lotId, {
-          ...current,
-          topBrix: payload.topBrix,
-          bottomBrix: payload.bottomBrix,
-          lastSampled: payload.lastSampled,
-          sampleVerified: true,
-          pendingSync: true,
-        });
       } else if (type === 'UPDATE_BOUNDARY') {
         lotMap.set(lotId, {
           ...current,
           coordinates: payload.coordinates,
           areaHa: payload.areaHa ?? current.areaHa,
+          latitude: payload.latitude ?? current.latitude,
+          longitude: payload.longitude ?? current.longitude,
           pendingSync: true,
         });
       } else if (type === 'UPDATE_DISPATCH') {
         lotMap.set(lotId, {
           ...current,
-          dispatch: payload.dispatch,
+          plannedHarvestDate: payload.dispatch?.scheduledDate ?? null,
+          harvestNotes: payload.dispatch?.notes ?? '',
+          dispatch: { ...current.dispatch, ...payload.dispatch },
           pendingSync: true,
         });
       }
@@ -225,12 +270,6 @@ function formatSupabaseError(error) {
   if (!error) return 'Unknown Supabase error';
   if (error.code === '23505') {
     return 'Lot ID already exists (PK conflict 23505). Please use the next sequential ID.';
-  }
-  if (error.code === '23502') {
-    return `Database NOT NULL constraint triggered (${error.message}). Please run Phase 1b migration in Supabase SQL Editor so Brix/last_sampled are nullable.`;
-  }
-  if (error.code === '42501') {
-    return `Row-Level Security policy blocked write (${error.message}).`;
   }
   return error.message || String(error);
 }
@@ -279,12 +318,10 @@ export async function fetchAllLots() {
         isOfflineCopy: false,
         error: null,
       };
-    } else {
-      lastErrorMsg = `Express API returned HTTP ${res.status}`;
     }
   } catch (err) {
     if (!lastErrorMsg) {
-      lastErrorMsg = `Offline (${err.name === 'AbortError' ? 'Connection timed out' : err.message})`;
+      lastErrorMsg = `Offline (${err.message})`;
     }
   }
 
@@ -302,11 +339,25 @@ export async function fetchAllLots() {
 
 export async function createFarmLot(newLot) {
   let supabaseError = null;
-  const hasBrix =
-    newLot.topBrix !== null &&
-    newLot.topBrix !== undefined &&
-    newLot.bottomBrix !== null &&
-    newLot.bottomBrix !== undefined;
+  const todayIso = new Date().toISOString().split('T')[0];
+
+  const metaPayload = {
+    lat: Number(newLot.latitude) || 10.8185,
+    lng: Number(newLot.longitude) || 123.0145,
+    contactNumber: newLot.contactNumber || '',
+    association: newLot.association || 'APSSI',
+    barangay: newLot.barangay || '',
+    city: newLot.city || 'Silay City',
+  };
+
+  const dispatchPayload = {
+    scheduledDate: newLot.plannedHarvestDate || null,
+    notes: newLot.harvestNotes || '',
+    contactNumber: newLot.contactNumber || '',
+    association: newLot.association || 'APSSI',
+    barangay: newLot.barangay || '',
+    city: newLot.city || 'Silay City',
+  };
 
   if (supabase) {
     try {
@@ -317,19 +368,22 @@ export async function createFarmLot(newLot) {
             id: newLot.id,
             hacienda: newLot.hacienda,
             planter: newLot.planter,
-            sector: newLot.sector,
-            variety: newLot.variety,
-            crop_class: newLot.cropClass,
+            sector: newLot.city
+              ? `${newLot.city} - ${newLot.barangay || ''}`
+              : newLot.sector || 'Silay City',
+            variety: newLot.variety || 'Phil 2006-2289',
+            crop_class: newLot.cropClass || 'Plant Cane',
             area_ha: newLot.areaHa,
-            expected_tc_ha: newLot.expectedTcHa,
-            planting_date: newLot.plantingDate,
-            crop_age_months: newLot.cropAgeMonths,
-            top_brix: hasBrix ? newLot.topBrix : null,
-            bottom_brix: hasBrix ? newLot.bottomBrix : null,
-            soil_moisture: newLot.soilMoisture || null,
-            last_sampled: hasBrix ? newLot.lastSampled : null,
+            expected_tc_ha: newLot.expectedTcHa || 75,
+            planting_date: newLot.plantingDate || todayIso,
+            crop_age_months: newLot.cropAgeMonths || 0,
+            top_brix: 0,
+            bottom_brix: 0,
+            soil_moisture: 'N/A',
+            last_sampled: newLot.plannedHarvestDate || todayIso,
             svg_points: newLot.coordinates ? JSON.stringify(newLot.coordinates) : null,
-            dispatch: newLot.dispatch ?? null,
+            label_pos: metaPayload,
+            dispatch: dispatchPayload,
           },
         ])
         .select();
@@ -347,17 +401,6 @@ export async function createFarmLot(newLot) {
       } else if (!data || data.length === 0) {
         supabaseError = 'Insert blocked by Supabase RLS policy (0 rows returned).';
       } else {
-        if (hasBrix) {
-          await supabase.from('brix_samples').insert([
-            {
-              lot_id: newLot.id,
-              top_brix: newLot.topBrix,
-              bottom_brix: newLot.bottomBrix,
-              sampled_at: newLot.lastSampled,
-              sampled_by: 'Initial registration sample',
-            },
-          ]);
-        }
         return { ok: true, error: null, source: 'Supabase Cloud DB', data: data[0] };
       }
     } catch (err) {
@@ -372,23 +415,16 @@ export async function createFarmLot(newLot) {
       body: JSON.stringify(newLot),
     });
     if (res.status === 409) {
-      const body = await res.json().catch(() => ({}));
       return {
         ok: false,
         code: '23505',
-        error: body.error || `Lot ID "${newLot.id}" already exists (PK conflict).`,
+        error: `Lot ID "${newLot.id}" already exists.`,
         source: 'Express API Server',
       };
     }
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return {
-        ok: false,
-        error: supabaseError || body.error || `Express POST failed (HTTP ${res.status})`,
-        source: 'Express API Server',
-      };
+    if (res.ok) {
+      return { ok: true, error: null, source: 'Express API Server' };
     }
-    return { ok: true, error: null, source: 'Express API Server' };
   } catch (err) {
     return {
       ok: false,
@@ -396,10 +432,34 @@ export async function createFarmLot(newLot) {
       source: supabase ? 'Supabase Cloud DB' : 'Express API Server',
     };
   }
+
+  return {
+    ok: false,
+    error: supabaseError || 'Failed to save lot',
+    source: 'Supabase Cloud DB',
+  };
 }
 
 export async function updateLotDetails(lotId, updates) {
   let supabaseError = null;
+
+  const metaPayload = {
+    lat: Number(updates.latitude) || 10.8185,
+    lng: Number(updates.longitude) || 123.0145,
+    contactNumber: updates.contactNumber || '',
+    association: updates.association || 'APSSI',
+    barangay: updates.barangay || '',
+    city: updates.city || 'Silay City',
+  };
+
+  const dispatchPayload = {
+    scheduledDate: updates.plannedHarvestDate || null,
+    notes: updates.harvestNotes || '',
+    contactNumber: updates.contactNumber || '',
+    association: updates.association || 'APSSI',
+    barangay: updates.barangay || '',
+    city: updates.city || 'Silay City',
+  };
 
   if (supabase) {
     try {
@@ -408,14 +468,18 @@ export async function updateLotDetails(lotId, updates) {
         .update({
           hacienda: updates.hacienda,
           planter: updates.planter,
-          sector: updates.sector,
+          sector: updates.city
+            ? `${updates.city} - ${updates.barangay || ''}`
+            : updates.sector,
           variety: updates.variety,
           crop_class: updates.cropClass,
           area_ha: updates.areaHa,
-          expected_tc_ha: updates.expectedTcHa,
+          expected_tc_ha: updates.expectedTcHa || 75,
           planting_date: updates.plantingDate,
-          crop_age_months: updates.cropAgeMonths,
-          soil_moisture: updates.soilMoisture || null,
+          crop_age_months: updates.cropAgeMonths || 0,
+          svg_points: updates.coordinates ? JSON.stringify(updates.coordinates) : undefined,
+          label_pos: metaPayload,
+          dispatch: dispatchPayload,
         })
         .eq('id', lotId)
         .select();
@@ -423,7 +487,7 @@ export async function updateLotDetails(lotId, updates) {
       if (error) {
         supabaseError = formatSupabaseError(error);
       } else if (!data || data.length === 0) {
-        supabaseError = `Update for ${lotId} blocked by RLS policy or row missing in Supabase.`;
+        supabaseError = `Update for ${lotId} blocked by RLS policy or row missing.`;
       } else {
         return { ok: true, error: null, source: 'Supabase Cloud DB', data: data[0] };
       }
@@ -438,15 +502,9 @@ export async function updateLotDetails(lotId, updates) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return {
-        ok: false,
-        error: supabaseError || body.error || `Express PATCH failed (HTTP ${res.status})`,
-        source: 'Express API Server',
-      };
+    if (res.ok) {
+      return { ok: true, error: null, source: 'Express API Server' };
     }
-    return { ok: true, error: null, source: 'Express API Server' };
   } catch (err) {
     return {
       ok: false,
@@ -454,71 +512,25 @@ export async function updateLotDetails(lotId, updates) {
       source: supabase ? 'Supabase Cloud DB' : 'Express API Server',
     };
   }
+
+  return {
+    ok: false,
+    error: supabaseError || 'Update failed',
+    source: 'Supabase Cloud DB',
+  };
 }
 
-export async function updateLotBrixSample(lotId, topBrix, bottomBrix, lastSampled) {
+export async function updateLotBoundary(lotId, coordinates, areaHa, latitude, longitude, existingLot = null) {
   let supabaseError = null;
 
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('farm_lots')
-        .update({
-          top_brix: topBrix,
-          bottom_brix: bottomBrix,
-          last_sampled: lastSampled,
-        })
-        .eq('id', lotId)
-        .select();
-
-      if (error) {
-        supabaseError = formatSupabaseError(error);
-      } else if (!data || data.length === 0) {
-        supabaseError = `Brix update for ${lotId} blocked by RLS policy or lot not found.`;
-      } else {
-        // Also record in brix_samples history table if migration has been applied
-        await supabase.from('brix_samples').insert([
-          {
-            lot_id: lotId,
-            top_brix: topBrix,
-            bottom_brix: bottomBrix,
-            sampled_at: lastSampled,
-            sampled_by: 'Field Officer',
-          },
-        ]);
-        return { ok: true, error: null, source: 'Supabase Cloud DB', data: data[0] };
-      }
-    } catch (err) {
-      supabaseError = err.message;
-    }
-  }
-
-  try {
-    const res = await fetchWithTimeout(`${API_URL}/lots/${lotId}/brix`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topBrix, bottomBrix, lastSampled }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return {
-        ok: false,
-        error: supabaseError || body.error || `Express Brix PATCH failed (HTTP ${res.status})`,
-        source: 'Express API Server',
-      };
-    }
-    return { ok: true, error: null, source: 'Express API Server' };
-  } catch (err) {
-    return {
-      ok: false,
-      error: supabaseError || `Brix sample save failed (${err.message})`,
-      source: supabase ? 'Supabase Cloud DB' : 'Express API Server',
-    };
-  }
-}
-
-export async function updateLotBoundary(lotId, coordinates, areaHa) {
-  let supabaseError = null;
+  const metaPayload = {
+    lat: Number(latitude) || 10.8185,
+    lng: Number(longitude) || 123.0145,
+    contactNumber: existingLot?.contactNumber || '',
+    association: existingLot?.association || 'APSSI',
+    barangay: existingLot?.barangay || '',
+    city: existingLot?.city || 'Silay City',
+  };
 
   if (supabase) {
     try {
@@ -527,6 +539,7 @@ export async function updateLotBoundary(lotId, coordinates, areaHa) {
         .update({
           svg_points: JSON.stringify(coordinates),
           area_ha: areaHa,
+          label_pos: metaPayload,
         })
         .eq('id', lotId)
         .select();
@@ -534,7 +547,7 @@ export async function updateLotBoundary(lotId, coordinates, areaHa) {
       if (error) {
         supabaseError = formatSupabaseError(error);
       } else if (!data || data.length === 0) {
-        supabaseError = `Boundary update for ${lotId} blocked by RLS policy or lot not found.`;
+        supabaseError = `Boundary update for ${lotId} blocked by RLS policy.`;
       } else {
         return { ok: true, error: null, source: 'Supabase Cloud DB', data: data[0] };
       }
@@ -547,17 +560,11 @@ export async function updateLotBoundary(lotId, coordinates, areaHa) {
     const res = await fetchWithTimeout(`${API_URL}/lots/${lotId}/boundary`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ coordinates, areaHa }),
+      body: JSON.stringify({ coordinates, areaHa, latitude, longitude }),
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return {
-        ok: false,
-        error: supabaseError || body.error || `Express Boundary PATCH failed (HTTP ${res.status})`,
-        source: 'Express API Server',
-      };
+    if (res.ok) {
+      return { ok: true, error: null, source: 'Express API Server' };
     }
-    return { ok: true, error: null, source: 'Express API Server' };
   } catch (err) {
     return {
       ok: false,
@@ -565,6 +572,12 @@ export async function updateLotBoundary(lotId, coordinates, areaHa) {
       source: supabase ? 'Supabase Cloud DB' : 'Express API Server',
     };
   }
+
+  return {
+    ok: false,
+    error: supabaseError || 'Boundary save failed',
+    source: 'Supabase Cloud DB',
+  };
 }
 
 export async function updateLotDispatch(lotId, dispatchData) {
@@ -581,7 +594,7 @@ export async function updateLotDispatch(lotId, dispatchData) {
       if (error) {
         supabaseError = formatSupabaseError(error);
       } else if (!data || data.length === 0) {
-        supabaseError = `Dispatch update for ${lotId} blocked by RLS policy or lot not found.`;
+        supabaseError = `Harvest date update for ${lotId} blocked by RLS policy.`;
       } else {
         return { ok: true, error: null, source: 'Supabase Cloud DB', data: data[0] };
       }
@@ -596,22 +609,22 @@ export async function updateLotDispatch(lotId, dispatchData) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dispatch: dispatchData }),
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return {
-        ok: false,
-        error: supabaseError || body.error || `Express Dispatch PATCH failed (HTTP ${res.status})`,
-        source: 'Express API Server',
-      };
+    if (res.ok) {
+      return { ok: true, error: null, source: 'Express API Server' };
     }
-    return { ok: true, error: null, source: 'Express API Server' };
   } catch (err) {
     return {
       ok: false,
-      error: supabaseError || `Dispatch save failed (${err.message})`,
+      error: supabaseError || `Harvest schedule save failed (${err.message})`,
       source: supabase ? 'Supabase Cloud DB' : 'Express API Server',
     };
   }
+
+  return {
+    ok: false,
+    error: supabaseError || 'Harvest schedule save failed',
+    source: 'Supabase Cloud DB',
+  };
 }
 
 export async function deleteFarmLot(lotId) {
@@ -628,7 +641,7 @@ export async function deleteFarmLot(lotId) {
       if (error) {
         supabaseError = formatSupabaseError(error);
       } else if (!data || data.length === 0) {
-        supabaseError = `Delete for ${lotId} blocked by Supabase RLS (missing DELETE policy) or row not found.`;
+        supabaseError = `Delete for ${lotId} blocked by Supabase RLS (missing DELETE policy).`;
       } else {
         return { ok: true, error: null, source: 'Supabase Cloud DB' };
       }
@@ -641,15 +654,9 @@ export async function deleteFarmLot(lotId) {
     const res = await fetchWithTimeout(`${API_URL}/lots/${lotId}`, {
       method: 'DELETE',
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return {
-        ok: false,
-        error: supabaseError || body.error || `Express DELETE failed (HTTP ${res.status})`,
-        source: 'Express API Server',
-      };
+    if (res.ok) {
+      return { ok: true, error: null, source: 'Express API Server' };
     }
-    return { ok: true, error: null, source: 'Express API Server' };
   } catch (err) {
     return {
       ok: false,
@@ -657,6 +664,12 @@ export async function deleteFarmLot(lotId) {
       source: supabase ? 'Supabase Cloud DB' : 'Express API Server',
     };
   }
+
+  return {
+    ok: false,
+    error: supabaseError || 'Delete failed',
+    source: 'Supabase Cloud DB',
+  };
 }
 
 export async function replayPendingOperations() {
@@ -679,18 +692,13 @@ export async function replayPendingOperations() {
       }
     } else if (op.type === 'UPDATE_DETAILS') {
       result = await updateLotDetails(op.lotId, op.payload);
-    } else if (op.type === 'UPDATE_BRIX') {
-      result = await updateLotBrixSample(
-        op.lotId,
-        op.payload.topBrix,
-        op.payload.bottomBrix,
-        op.payload.lastSampled
-      );
     } else if (op.type === 'UPDATE_BOUNDARY') {
       result = await updateLotBoundary(
         op.lotId,
         op.payload.coordinates,
-        op.payload.areaHa
+        op.payload.areaHa,
+        op.payload.latitude,
+        op.payload.longitude
       );
     } else if (op.type === 'UPDATE_DISPATCH') {
       result = await updateLotDispatch(op.lotId, op.payload.dispatch);
@@ -709,3 +717,4 @@ export async function replayPendingOperations() {
   savePendingOperations(remainingOps);
   return { replayed, remaining: remainingOps.length, errors };
 }
+

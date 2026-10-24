@@ -1,65 +1,22 @@
 ﻿import React, { useState, useEffect, useMemo } from 'react';
 import {
-  AlertCircle,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  FlaskConical,
-  Truck,
+  Calendar,
+  Pencil,
+  Compass,
+  Phone,
+  Building2,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
 import { getStatusStyles } from '../utils/caneCalculations';
 
-function MiniBrixSparkline({ points = [], weeklyDelta = null }) {
-  if (!Array.isArray(points) || points.length < 2) return null;
-  const width = 54;
-  const height = 16;
-  const min = Math.min(...points) - 0.5;
-  const max = Math.max(...points) + 0.5;
-  const range = Math.max(1, max - min);
-
-  const polyPoints = points
-    .map((val, idx) => {
-      const x = ((idx / (points.length - 1)) * width).toFixed(1);
-      const y = (height - ((val - min) / range) * height).toFixed(1);
-      return `${x},${y}`;
-    })
-    .join(' ');
-
-  return (
-    <div
-      className="inline-flex items-center gap-1.5 mt-0.5"
-      title={`Brix trend: ${points.join('° -> ')}°`}
-    >
-      <svg width={width} height={height} className="overflow-visible">
-        <polyline
-          fill="none"
-          stroke="#10b981"
-          strokeWidth="1.75"
-          points={polyPoints}
-        />
-      </svg>
-      {weeklyDelta !== null && (
-        <span
-          className={
-            'text-[10px] font-mono font-bold ' +
-            (weeklyDelta >= 0
-              ? 'text-emerald-700 dark:text-emerald-400'
-              : 'text-rose-600')
-          }
-        >
-          {weeklyDelta >= 0 ? `+${weeklyDelta}°/wk` : `${weeklyDelta}°/wk`}
-        </span>
-      )}
-    </div>
-  );
-}
-
 export default function PlanterTableView({
   lots = [],
   onSelectLot,
-  onQuickLogBrix,
+  onEditLot,
   onQuickScheduleCut,
   onBulkScheduleHarvest,
   density = 'compact',
@@ -67,8 +24,8 @@ export default function PlanterTableView({
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [selectedIds, setSelectedIds] = useState([]);
-  const [bulkDate, setBulkDate] = useState('2026-10-28');
-  const [bulkBrigade, setBulkBrigade] = useState('District Cutting Brigade A');
+  const [bulkDate, setBulkDate] = useState('2026-11-15');
+  const [bulkNotes, setBulkNotes] = useState('Planter group harvest schedule');
   const [pageSize, setPageSize] = useState(15);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -91,28 +48,18 @@ export default function PlanterTableView({
     return [...lots].sort((a, b) => {
       if (sortCol === 'id') return a.id.localeCompare(b.id) * dir;
       if (sortCol === 'planter') return a.planter.localeCompare(b.planter) * dir;
+      if (sortCol === 'association')
+        return String(a.association || '').localeCompare(String(b.association || '')) * dir;
+      if (sortCol === 'location')
+        return String(a.city || '').localeCompare(String(b.city || '')) * dir;
       if (sortCol === 'area') return ((a.areaHa || 0) - (b.areaHa || 0)) * dir;
-      if (sortCol === 'age')
-        return ((a.cropAgeMonths || 0) - (b.cropAgeMonths || 0)) * dir;
-      if (sortCol === 'brix')
-        return ((a.avgBrix ?? -1) - (b.avgBrix ?? -1)) * dir;
-      if (sortCol === 'ratio')
-        return ((a.maturityRatio ?? -1) - (b.maturityRatio ?? -1)) * dir;
-      if (sortCol === 'readiness')
-        return ((a.readinessScore ?? -1) - (b.readinessScore ?? -1)) * dir;
+      if (sortCol === 'harvestDate') {
+        const dA = a.plannedHarvestDate || '9999-12-31';
+        const dB = b.plannedHarvestDate || '9999-12-31';
+        return dA.localeCompare(dB) * dir;
+      }
       if (sortCol === 'status')
         return ((a.statusPriority || 4) - (b.statusPriority || 4)) * dir;
-      if (sortCol === 'lastSampled')
-        return (
-          String(a.lastSampled || '').localeCompare(String(b.lastSampled || '')) *
-          dir
-        );
-      if (sortCol === 'scheduled')
-        return (
-          String(a.dispatch?.scheduledDate || '').localeCompare(
-            String(b.dispatch?.scheduledDate || '')
-          ) * dir
-        );
       return 0;
     });
   }, [lots, sortCol, sortDir]);
@@ -147,18 +94,18 @@ export default function PlanterTableView({
     );
   };
 
-  const handleApplyBulkDispatch = (e) => {
+  const handleApplyBulkDate = (e) => {
     e.preventDefault();
     if (selectedIds.length === 0 || !onBulkScheduleHarvest) return;
     onBulkScheduleHarvest(selectedIds, {
       scheduledDate: bulkDate,
-      brigadeLeader: bulkBrigade,
+      notes: bulkNotes,
     });
     setSelectedIds([]);
   };
 
   const isCompact = density === 'compact';
-  const cellPad = isCompact ? 'py-2 px-3' : 'py-3.5 px-4';
+  const cellPad = isCompact ? 'py-2.5 px-3' : 'py-3.5 px-4';
 
   const renderSortIcon = (col) => {
     if (sortCol !== col) return <ArrowUpDown className="w-3 h-3 opacity-40" />;
@@ -173,7 +120,7 @@ export default function PlanterTableView({
     return (
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-10 text-center">
         <p className="text-sm font-bold text-slate-700 dark:text-slate-200">
-          No sugarcane lots match your filter criteria.
+          No planter lots match your filter criteria.
         </p>
       </div>
     );
@@ -181,20 +128,19 @@ export default function PlanterTableView({
 
   return (
     <div className="space-y-2.5">
-      {/* 2f. Bulk "Schedule harvest" Action Bar */}
       {selectedIds.length > 0 && (
         <form
-          onSubmit={handleApplyBulkDispatch}
+          onSubmit={handleApplyBulkDate}
           className="bg-emerald-950 text-white rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md"
         >
           <div className="flex items-center gap-2 font-bold">
-            <Truck className="w-4 h-4 text-emerald-400" />
-            <span>{selectedIds.length} lot(s) selected for bulk harvest dispatch</span>
+            <Calendar className="w-4 h-4 text-emerald-400" />
+            <span>Set Planned Harvest Date for {selectedIds.length} selected lot(s)</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <label className="inline-flex items-center gap-1.5 text-[11px]">
-              <span className="text-slate-300">Cut Date:</span>
+              <span className="text-slate-300">Planned Date:</span>
               <input
                 type="date"
                 required
@@ -204,12 +150,12 @@ export default function PlanterTableView({
               />
             </label>
             <label className="inline-flex items-center gap-1.5 text-[11px]">
-              <span className="text-slate-300">Crew:</span>
+              <span className="text-slate-300">Notes:</span>
               <input
                 type="text"
-                required
-                value={bulkBrigade}
-                onChange={(e) => setBulkBrigade(e.target.value)}
+                placeholder="Optional planter note"
+                value={bulkNotes}
+                onChange={(e) => setBulkNotes(e.target.value)}
                 className="px-2 py-1 rounded bg-slate-900 border border-slate-700 text-white font-semibold"
               />
             </label>
@@ -217,7 +163,7 @@ export default function PlanterTableView({
               type="submit"
               className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
             >
-              Schedule harvest ({selectedIds.length})
+              Apply Harvest Date ({selectedIds.length})
             </button>
             <button
               type="button"
@@ -230,7 +176,7 @@ export default function PlanterTableView({
         </form>
       )}
 
-      {/* Sticky Header Table */}
+      {/* Main Planter Directory & Harvest Schedule Table */}
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-2xs">
         <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
           <table className="w-full text-left border-collapse">
@@ -245,58 +191,51 @@ export default function PlanterTableView({
                   />
                 </th>
                 <th
-                  onClick={() => handleSortHeader('id')}
-                  className={cellPad + ' cursor-pointer hover:text-slate-900'}
-                >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Lot & Hacienda</span>
-                    {renderSortIcon('id')}
-                  </div>
-                </th>
-                <th
                   onClick={() => handleSortHeader('planter')}
                   className={cellPad + ' cursor-pointer hover:text-slate-900'}
                 >
                   <div className="inline-flex items-center gap-1">
-                    <span>Planter & Sector</span>
+                    <span>Planter & Contact No.</span>
                     {renderSortIcon('planter')}
                   </div>
                 </th>
-                <th className={cellPad}>Variety</th>
+                <th
+                  onClick={() => handleSortHeader('association')}
+                  className={cellPad + ' cursor-pointer hover:text-slate-900'}
+                >
+                  <div className="inline-flex items-center gap-1">
+                    <span>Planter's Assoc.</span>
+                    {renderSortIcon('association')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSortHeader('location')}
+                  className={cellPad + ' cursor-pointer hover:text-slate-900'}
+                >
+                  <div className="inline-flex items-center gap-1">
+                    <span>Hacienda, Brgy. & City</span>
+                    {renderSortIcon('location')}
+                  </div>
+                </th>
                 <th
                   onClick={() => handleSortHeader('area')}
                   className={cellPad + ' cursor-pointer hover:text-slate-900'}
                 >
                   <div className="inline-flex items-center gap-1">
-                    <span>Area / MT</span>
+                    <span>Hectarage</span>
                     {renderSortIcon('area')}
                   </div>
                 </th>
-                <th
-                  onClick={() => handleSortHeader('age')}
-                  className={cellPad + ' cursor-pointer hover:text-slate-900'}
-                >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Age</span>
-                    {renderSortIcon('age')}
-                  </div>
+                <th className={cellPad}>
+                  <span>Lat / Long Area</span>
                 </th>
                 <th
-                  onClick={() => handleSortHeader('brix')}
+                  onClick={() => handleSortHeader('harvestDate')}
                   className={cellPad + ' cursor-pointer hover:text-slate-900'}
                 >
                   <div className="inline-flex items-center gap-1">
-                    <span>Avg Brix / Ratio</span>
-                    {renderSortIcon('brix')}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSortHeader('readiness')}
-                  className={cellPad + ' cursor-pointer hover:text-slate-900'}
-                >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Readiness index</span>
-                    {renderSortIcon('readiness')}
+                    <span>Planned Harvest Date</span>
+                    {renderSortIcon('harvestDate')}
                   </div>
                 </th>
                 <th
@@ -304,26 +243,8 @@ export default function PlanterTableView({
                   className={cellPad + ' cursor-pointer hover:text-slate-900'}
                 >
                   <div className="inline-flex items-center gap-1">
-                    <span>Status & Est. Ready</span>
+                    <span>Status</span>
                     {renderSortIcon('status')}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSortHeader('lastSampled')}
-                  className={cellPad + ' cursor-pointer hover:text-slate-900'}
-                >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Last Sampled</span>
-                    {renderSortIcon('lastSampled')}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSortHeader('scheduled')}
-                  className={cellPad + ' cursor-pointer hover:text-slate-900'}
-                >
-                  <div className="inline-flex items-center gap-1">
-                    <span>Scheduled</span>
-                    {renderSortIcon('scheduled')}
                   </div>
                 </th>
                 <th className={cellPad + ' text-right'}>Actions</th>
@@ -361,160 +282,92 @@ export default function PlanterTableView({
                       />
                     </td>
 
+                    {/* Planter Name & Contact Number */}
                     <td className={cellPad}>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <span className="font-mono font-bold text-slate-900 dark:text-white">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-bold text-[11px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                           {lot.id}
                         </span>
-                        {lot.pendingSync && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300">
-                            Pending
-                          </span>
-                        )}
-                        {lot.isUnverifiedDefault && (
-                          <span
-                            title="Flagged: 20.0 / 20.5° matches legacy form default"
-                            className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-300"
-                          >
-                            <AlertCircle className="w-2.5 h-2.5" />
-                            Unverified
-                          </span>
-                        )}
+                        <span className="font-extrabold text-slate-900 dark:text-white text-sm">
+                          {lot.planter}
+                        </span>
                       </div>
-                      <div className="text-slate-700 dark:text-slate-300 font-semibold truncate max-w-[160px]">
-                        {lot.hacienda}
+                      <div className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-300 mt-0.5 font-medium">
+                        <Phone className="w-3 h-3 text-emerald-600" />
+                        <span>{lot.contactNumber || 'No contact no.'}</span>
                       </div>
                     </td>
 
+                    {/* Planter's Association */}
                     <td className={cellPad}>
-                      <div className="font-bold text-slate-800 dark:text-slate-200">
-                        {lot.planter}
-                      </div>
-                      <div className="text-[11px] text-slate-400">{lot.sector}</div>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-bold text-xs">
+                        <Building2 className="w-3 h-3" />
+                        {lot.association}
+                      </span>
                     </td>
 
-                    <td className={cellPad}>
-                      <div className="font-medium text-slate-800 dark:text-slate-200">
-                        {lot.variety}
-                      </div>
-                      <div className="text-[11px] text-slate-400">{lot.cropClass}</div>
-                    </td>
-
+                    {/* Hacienda, Brgy. & City */}
                     <td className={cellPad}>
                       <div className="font-bold text-slate-900 dark:text-white">
+                        {lot.hacienda}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                        {lot.barangay}, <strong className="text-slate-700 dark:text-slate-200">{lot.city}</strong>
+                      </div>
+                    </td>
+
+                    {/* Hectarage */}
+                    <td className={cellPad}>
+                      <div className="text-sm font-black text-slate-900 dark:text-white">
                         {lot.areaHa} ha
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        {lot.estimatedTons.toLocaleString()} MT
+                        ~{lot.estimatedTons.toLocaleString()} MT
                       </div>
                     </td>
 
+                    {/* Lat / Long */}
                     <td className={cellPad}>
-                      <div className="font-bold text-slate-800 dark:text-slate-200">
-                        {lot.cropAgeMonths}m
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {lot.plantingDate || '—'}
+                      <div className="inline-flex items-center gap-1 font-mono font-bold text-[11px] text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700">
+                        <Compass className="w-3 h-3 text-rose-500 shrink-0" />
+                        <span>
+                          {lot.latitude.toFixed(5)}°N, {lot.longitude.toFixed(5)}°E
+                        </span>
                       </div>
                     </td>
 
+                    {/* Planned Harvest Date */}
                     <td className={cellPad}>
-                      {lot.hasBrixSample ? (
+                      {lot.plannedHarvestDate ? (
                         <div>
-                          <div>
-                            <span className="font-extrabold text-slate-900 dark:text-white">
-                              {lot.avgBrix}°
-                            </span>
-                            <span className="text-slate-400 ml-1 text-[11px]">
-                              ({lot.topBrix}°/{lot.bottomBrix}°)
-                            </span>
-                            <span className="ml-1.5 font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                              {lot.maturityRatio}
-                            </span>
+                          <div className="font-extrabold text-emerald-700 dark:text-emerald-400 text-sm">
+                            {lot.plannedHarvestDate}
                           </div>
-                          <MiniBrixSparkline
-                            points={lot.brixTrend?.points}
-                            weeklyDelta={lot.brixTrend?.weeklyDelta}
-                          />
+                          <div className="text-[11px] text-slate-500 font-medium">
+                            {lot.harvestTimelineLabel}
+                          </div>
                         </div>
                       ) : (
                         <span className="text-amber-700 dark:text-amber-400 font-semibold">
-                          No sample yet
+                          Not set yet
                         </span>
                       )}
                     </td>
 
-                    <td className={cellPad}>
-                      {lot.hasBrixSample ? (
-                        <div className="w-24">
-                          <div className="flex justify-between text-[11px] font-bold">
-                            <span>{lot.readinessScore}%</span>
-                            <span className="text-emerald-700 dark:text-emerald-400 text-[10px]">
-                              {lot.estimatedLkgTc} LKg
-                            </span>
-                          </div>
-                          <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 mt-1 overflow-hidden">
-                            <div
-                              className={'h-full rounded-full ' + styles.bar}
-                              style={{ width: lot.readinessScore + '%' }}
-                            />
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
-
+                    {/* Status */}
                     <td className={cellPad}>
                       <span
-                        title={lot.gateChecklist?.map((g) => g.summary).join(' | ')}
                         className={
-                          'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold border ' +
+                          'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ' +
                           styles.badge
                         }
                       >
                         <span className={'w-1.5 h-1.5 rounded-full ' + styles.dot} />
-                        {lot.statusDisplay || lot.status}
+                        {lot.status}
                       </span>
-                      <div
-                        className="text-[10px] text-slate-500 mt-0.5 truncate max-w-[165px]"
-                        title={lot.estimatedReady?.reason}
-                      >
-                        Est:{' '}
-                        <strong className="text-slate-700 dark:text-slate-300">
-                          {lot.estimatedReady?.label || '—'}
-                        </strong>
-                      </div>
                     </td>
 
-                    <td className={cellPad}>
-                      {lot.hasBrixSample && lot.lastSampled ? (
-                        <span className="font-medium text-slate-700 dark:text-slate-300">
-                          {lot.lastSampled}
-                        </span>
-                      ) : (
-                        <span className="text-amber-700 dark:text-amber-400 font-semibold">
-                          No sample yet
-                        </span>
-                      )}
-                    </td>
-
-                    <td className={cellPad}>
-                      {lot.dispatch?.scheduledDate ? (
-                        <div>
-                          <span className="font-bold text-emerald-700 dark:text-emerald-400">
-                            {lot.dispatch.scheduledDate}
-                          </span>
-                          <div className="text-[10px] font-mono text-slate-400">
-                            {lot.dispatch.quedanTicket}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400">Unscheduled</span>
-                      )}
-                    </td>
-
-                    {/* 2g. Log Brix and Schedule cut on every row */}
+                    {/* Actions */}
                     <td
                       className={cellPad + ' text-right'}
                       onClick={(e) => e.stopPropagation()}
@@ -522,21 +375,21 @@ export default function PlanterTableView({
                       <div className="inline-flex items-center justify-end gap-1.5">
                         <button
                           type="button"
-                          onClick={() => onQuickLogBrix && onQuickLogBrix(lot)}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-emerald-50 text-slate-700 dark:text-slate-200 font-semibold text-[11px]"
-                          title="Log Refractometer Brix for this lot"
+                          onClick={() => onQuickScheduleCut && onQuickScheduleCut(lot)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px]"
                         >
-                          <FlaskConical className="w-3 h-3 text-emerald-700" />
-                          <span>Log Brix</span>
+                          <Calendar className="w-3 h-3" />
+                          <span>
+                            {lot.plannedHarvestDate ? 'Change Date' : 'Set Date'}
+                          </span>
                         </button>
                         <button
                           type="button"
-                          onClick={() => onQuickScheduleCut && onQuickScheduleCut(lot)}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 font-semibold text-[11px]"
-                          title="Schedule harvest dispatch for this lot"
+                          onClick={() => onEditLot && onEditLot(lot)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 font-semibold text-[11px]"
                         >
-                          <Truck className="w-3 h-3 text-slate-600" />
-                          <span>Schedule cut</span>
+                          <Pencil className="w-3 h-3 text-emerald-700" />
+                          <span>Edit</span>
                         </button>
                       </div>
                     </td>
@@ -548,7 +401,7 @@ export default function PlanterTableView({
         </div>
       </div>
 
-      {/* Table Pagination Footer */}
+      {/* Pagination Footer */}
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
           <span>
@@ -573,7 +426,6 @@ export default function PlanterTableView({
             <option value={10}>10 rows</option>
             <option value={15}>15 rows</option>
             <option value={30}>30 rows</option>
-            <option value={50}>50 rows</option>
             <option value="ALL">All rows</option>
           </select>
         </div>
