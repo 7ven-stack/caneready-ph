@@ -377,10 +377,6 @@ export async function createFarmLot(newLot) {
             expected_tc_ha: newLot.expectedTcHa || 75,
             planting_date: newLot.plantingDate || todayIso,
             crop_age_months: newLot.cropAgeMonths || 0,
-            top_brix: 0,
-            bottom_brix: 0,
-            soil_moisture: 'N/A',
-            last_sampled: newLot.plannedHarvestDate || todayIso,
             svg_points: newLot.coordinates ? JSON.stringify(newLot.coordinates) : null,
             label_pos: metaPayload,
             dispatch: dispatchPayload,
@@ -718,3 +714,14 @@ export async function replayPendingOperations() {
   return { replayed, remaining: remainingOps.length, errors };
 }
 
+
+export function clearPendingOperations() {
+  try {
+    Object.keys(localStorage).forEach((key) => {
+      if (key.toLowerCase().includes('pending') || key.toLowerCase().includes('cache')) {
+        localStorage.removeItem(key);
+      }
+    });
+  } catch (e) {}
+  return [];
+}

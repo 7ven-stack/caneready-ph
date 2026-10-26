@@ -13,6 +13,7 @@ import {
   getPendingOperations,
   enqueuePendingOperation,
   replayPendingOperations,
+  clearPendingOperations,
 } from './services/lotService';
 import Navbar from './components/Navbar';
 import KpiStrip from './components/KpiStrip';
@@ -123,6 +124,12 @@ export default function App() {
   }, [showToast]);
 
   useEffect(() => {
+    try {
+      if (!localStorage.getItem('caneready_restored_polygons_v2')) {
+        clearPendingOperations();
+        localStorage.setItem('caneready_restored_polygons_v2', '1');
+      }
+    } catch {}
     syncLots();
   }, [syncLots]);
 
@@ -146,10 +153,17 @@ export default function App() {
 
   const evaluatedLots = useMemo(
     () =>
-      rawLots.map((lot) => ({
-        ...evaluateLotMetrics(lot),
-        pendingSync: Boolean(lot.pendingSync || pendingLotIds.has(lot.id)),
-      })),
+      rawLots.map((lot) => {
+        const normalizedAssoc =
+          String(lot.association || '').toLowerCase() === 'independent'
+            ? 'Private'
+            : lot.association || 'APSSI';
+        return {
+          ...evaluateLotMetrics({ ...lot, association: normalizedAssoc }),
+          association: normalizedAssoc,
+          pendingSync: Boolean(lot.pendingSync || pendingLotIds.has(lot.id)),
+        };
+      }),
     [rawLots, pendingLotIds]
   );
 
@@ -301,22 +315,11 @@ export default function App() {
     setSelectedLotId(null);
 
     const res = await deleteFarmLot(lotId);
-    if (!res.ok) {
-      const nextQueue = enqueuePendingOperation({
-        type: 'DELETE_LOT',
-        lotId,
-        payload: null,
-        lastError: res.error,
-      });
-      setPendingOps(nextQueue);
-      showToast(
-        'warning',
-        `Delete Pending (${lotId})`,
-        `${res.error}. Deletion queued.`
-      );
-      return res;
+    const remaining = getPendingOperations();
+    setPendingOps(remaining);
+    if (remaining.length === 0) {
+      setDataSource('Supabase Cloud DB');
     }
-
     showToast('success', 'Lot Deleted', `${lotId} removed from ${res.source}.`);
     return res;
   };
@@ -527,7 +530,7 @@ export default function App() {
     <div
       className={
         'flex flex-col bg-slate-50 text-slate-900 transition-colors ' +
-        (viewMode === 'map' ? 'h-screen overflow-hidden' : 'min-h-screen')
+        'h-screen overflow-hidden'
       }
     >
       <Navbar
@@ -578,14 +581,32 @@ export default function App() {
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={syncLots}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-800 hover:bg-amber-900 text-white font-bold text-[11px]"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>Retry Sync Now</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={syncLots}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-800 hover:bg-amber-900 text-white font-bold text-[11px]"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Retry Sync Now</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearPendingOperations();
+                  setPendingOps([]);
+                  setRawLots((prev) =>
+                    prev.map((l) => ({ ...l, pendingSync: false }))
+                  );
+                  setDataSource('Supabase Cloud DB');
+                  showToast('info', 'Pending Queue Cleared', 'Cleared stuck local queue items.');
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 hover:bg-amber-100 text-amber-900 dark:text-amber-200 font-semibold text-[11px]"
+              >
+                <X className="w-3 h-3" />
+                <span>Dismiss Pending</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -637,34 +658,38 @@ export default function App() {
           />
         </main>
       ) : (
-        <main className="flex-1 max-w-[1440px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 space-y-3.5">
-          <KpiStrip
-            lots={evaluatedLots}
-            statusFilter={statusFilter}
-            onSelectStatus={setStatusFilter}
-            isLoading={isLoading}
-          />
+        <main className="flex-1 min-h-0 max-w-[1560px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-3 flex flex-col gap-2.5 overflow-hidden">
+          <div className="shrink-0">
+            <KpiStrip
+              lots={evaluatedLots}
+              statusFilter={statusFilter}
+              onSelectStatus={setStatusFilter}
+              isLoading={isLoading}
+            />
+          </div>
 
-          <FilterToolbar
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            cityFilter={cityFilter}
-            onCityChange={setCityFilter}
-            cities={cities}
-            associationFilter={associationFilter}
-            onAssociationChange={setAssociationFilter}
-            associations={associations}
-            sortBy={sortBy}
-            onSortChange={setSortBy}
-            viewMode={viewMode}
-            onViewModeChange={setViewMode}
-            statusFilter={statusFilter}
-            onStatusFilterChange={setStatusFilter}
-            allLots={evaluatedLots}
-            filteredCount={filteredLots.length}
-            density={density}
-            onDensityChange={setDensity}
-          />
+          <div className="shrink-0">
+            <FilterToolbar
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              cityFilter={cityFilter}
+              onCityChange={setCityFilter}
+              cities={cities}
+              associationFilter={associationFilter}
+              onAssociationChange={setAssociationFilter}
+              associations={associations}
+              sortBy={sortBy}
+              onSortChange={setSortBy}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              allLots={evaluatedLots}
+              filteredCount={filteredLots.length}
+              density={density}
+              onDensityChange={setDensity}
+            />
+          </div>
 
           {isLoading && evaluatedLots.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-12 text-center text-xs text-slate-500">
@@ -744,6 +769,12 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
 
 
 

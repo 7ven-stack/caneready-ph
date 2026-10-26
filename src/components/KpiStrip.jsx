@@ -1,5 +1,55 @@
-﻿import React, { useState } from 'react';
-import { CalendarCheck2, Clock, CalendarDays, HelpCircle, Layers } from 'lucide-react';
+﻿import React, { useMemo, useState } from 'react';
+
+const STATUS_CATEGORIES = [
+  {
+    key: 'Harvest Due',
+    label: 'Harvest Due (≤ 7D)',
+    shortLabel: 'Due ≤7d',
+    dotClass: 'bg-emerald-500',
+    barClass: 'bg-emerald-500 hover:bg-emerald-600',
+    accentBorder: 'border-emerald-500/80 dark:border-emerald-500',
+    activeBg: 'bg-emerald-50/50 dark:bg-emerald-950/30',
+    badgeClass:
+      'bg-emerald-100/80 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300',
+    numColor: 'text-emerald-700 dark:text-emerald-400',
+  },
+  {
+    key: 'Upcoming',
+    label: 'Upcoming (8–30D)',
+    shortLabel: 'Upcoming',
+    dotClass: 'bg-amber-500',
+    barClass: 'bg-amber-500 hover:bg-amber-600',
+    accentBorder: 'border-amber-500/80 dark:border-amber-500',
+    activeBg: 'bg-amber-50/50 dark:bg-amber-950/30',
+    badgeClass:
+      'bg-amber-100/80 dark:bg-amber-950 text-amber-800 dark:text-amber-300',
+    numColor: 'text-amber-700 dark:text-amber-400',
+  },
+  {
+    key: 'Planned Later',
+    label: 'Planned Later (> 30D)',
+    shortLabel: 'Planned Later',
+    dotClass: 'bg-sky-500',
+    barClass: 'bg-sky-500 hover:bg-sky-600',
+    accentBorder: 'border-sky-500/80 dark:border-sky-500',
+    activeBg: 'bg-sky-50/50 dark:bg-sky-950/30',
+    badgeClass:
+      'bg-sky-100/80 dark:bg-sky-950 text-sky-800 dark:text-sky-300',
+    numColor: 'text-sky-700 dark:text-sky-400',
+  },
+  {
+    key: 'No Date Set',
+    label: 'No Date Set',
+    shortLabel: 'Unscheduled',
+    dotClass: 'bg-slate-400 dark:bg-slate-500',
+    barClass: 'bg-slate-400 dark:bg-slate-500 hover:bg-slate-500',
+    accentBorder: 'border-slate-500 dark:border-slate-400',
+    activeBg: 'bg-slate-100/70 dark:bg-slate-800/60',
+    badgeClass:
+      'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
+    numColor: 'text-slate-800 dark:text-slate-200',
+  },
+];
 
 export default function KpiStrip({
   lots = [],
@@ -7,238 +57,295 @@ export default function KpiStrip({
   onSelectStatus,
   isLoading = false,
 }) {
-  const [mixMetric, setMixMetric] = useState('ha');
+  const [hoveredKey, setHoveredKey] = useState(null);
 
-  const sumHa = (arr) =>
-    Number(arr.reduce((sum, l) => sum + (Number(l.areaHa) || 0), 0).toFixed(2));
-  const sumTons = (arr) =>
-    Math.round(arr.reduce((sum, l) => sum + (Number(l.estimatedTons) || 0), 0));
+  const metrics = useMemo(() => {
+    const totalLots = lots.length;
+    const totalHa = lots.reduce((sum, l) => sum + (Number(l.areaHa) || 0), 0);
+    const totalTons = lots.reduce(
+      (sum, l) => sum + (Number(l.estimatedTons) || 0),
+      0
+    );
 
-  const totalHa = sumHa(lots);
-  const totalTons = sumTons(lots);
+    const byStatus = STATUS_CATEGORIES.map((cat) => {
+      const matched = lots.filter((l) => l.status === cat.key);
+      const ha = matched.reduce((sum, l) => sum + (Number(l.areaHa) || 0), 0);
+      const tons = matched.reduce(
+        (sum, l) => sum + (Number(l.estimatedTons) || 0),
+        0
+      );
+      const pct = totalHa > 0 ? (ha / totalHa) * 100 : 0;
 
-  const dueLots = lots.filter((l) => l.status === 'Harvest Due');
-  const upcomingLots = lots.filter((l) => l.status === 'Upcoming (30d)');
-  const laterLots = lots.filter((l) => l.status === 'Planned Later');
-  const unscheduledLots = lots.filter((l) => l.status === 'No Date Set');
+      return {
+        ...cat,
+        count: matched.length,
+        ha,
+        tons,
+        pct,
+      };
+    });
 
-  const metricPct = (arr) => {
-    if (mixMetric === 'tons') {
-      return totalTons > 0
-        ? Number(((sumTons(arr) / totalTons) * 100).toFixed(1))
-        : 0;
+    return {
+      totalLots,
+      totalHa,
+      totalTons,
+      byStatus,
+    };
+  }, [lots]);
+
+  const hoveredSegment = useMemo(
+    () => metrics.byStatus.find((s) => s.key === hoveredKey) || null,
+    [metrics.byStatus, hoveredKey]
+  );
+
+  const handleCardClick = (key) => {
+    if (!onSelectStatus) return;
+    if (key === 'ALL') {
+      onSelectStatus('ALL');
+    } else {
+      onSelectStatus(statusFilter === key ? 'ALL' : key);
     }
-    return totalHa > 0 ? Number(((sumHa(arr) / totalHa) * 100).toFixed(1)) : 0;
   };
-
-  const formatTooltip = (label, arr) => {
-    const ha = sumHa(arr);
-    const mt = sumTons(arr);
-    const pct = metricPct(arr);
-    return `${label}: ${arr.length} lot${arr.length === 1 ? '' : 's'} • ${ha} ha • ${mt.toLocaleString()} MT (${pct}%)`;
-  };
-
-  const chips = [
-    {
-      id: 'ALL',
-      label: 'All Planter Lots',
-      count: lots.length,
-      ha: totalHa,
-      mt: totalTons,
-      icon: Layers,
-      activeClass: 'border-slate-900 bg-slate-900 text-white shadow-xs',
-      idleClass: 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100',
-      iconClass: 'text-slate-600',
-    },
-    {
-      id: 'Harvest Due',
-      label: 'Harvest Due (≤ 7d)',
-      count: dueLots.length,
-      ha: sumHa(dueLots),
-      mt: sumTons(dueLots),
-      icon: CalendarCheck2,
-      activeClass: 'border-emerald-700 bg-emerald-700 text-white shadow-xs',
-      idleClass:
-        dueLots.length > 0
-          ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900 hover:bg-emerald-100/70'
-          : 'border-slate-200 bg-slate-50/60 text-slate-400 opacity-65',
-      iconClass: dueLots.length > 0 ? 'text-emerald-600' : 'text-slate-400',
-    },
-    {
-      id: 'Upcoming (30d)',
-      label: 'Upcoming (8–30d)',
-      count: upcomingLots.length,
-      ha: sumHa(upcomingLots),
-      mt: sumTons(upcomingLots),
-      icon: Clock,
-      activeClass: 'border-amber-600 bg-amber-600 text-white shadow-xs',
-      idleClass:
-        upcomingLots.length > 0
-          ? 'border-amber-200 bg-amber-50/70 text-amber-900 hover:bg-amber-100/70'
-          : 'border-slate-200 bg-slate-50/60 text-slate-400 opacity-65',
-      iconClass: upcomingLots.length > 0 ? 'text-amber-600' : 'text-slate-400',
-    },
-    {
-      id: 'Planned Later',
-      label: 'Planned Later (> 30d)',
-      count: laterLots.length,
-      ha: sumHa(laterLots),
-      mt: sumTons(laterLots),
-      icon: CalendarDays,
-      activeClass: 'border-sky-700 bg-sky-700 text-white shadow-xs',
-      idleClass:
-        laterLots.length > 0
-          ? 'border-sky-200 bg-sky-50/70 text-sky-900 hover:bg-sky-100/70'
-          : 'border-slate-200 bg-slate-50/60 text-slate-400 opacity-65',
-      iconClass: laterLots.length > 0 ? 'text-sky-600' : 'text-slate-400',
-    },
-    {
-      id: 'No Date Set',
-      label: 'No Date Set',
-      count: unscheduledLots.length,
-      ha: sumHa(unscheduledLots),
-      mt: sumTons(unscheduledLots),
-      icon: HelpCircle,
-      activeClass: 'border-slate-800 bg-slate-800 text-white shadow-xs',
-      idleClass:
-        unscheduledLots.length > 0
-          ? 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-          : 'border-slate-200 bg-slate-50/60 text-slate-400 opacity-65',
-      iconClass: 'text-slate-400',
-    },
-  ];
-
-  const segments = [
-    { id: 'Harvest Due', label: 'Harvest Due', arr: dueLots, color: 'bg-emerald-500' },
-    { id: 'Upcoming (30d)', label: 'Upcoming (8–30d)', arr: upcomingLots, color: 'bg-amber-400' },
-    { id: 'Planned Later', label: 'Planned Later', arr: laterLots, color: 'bg-sky-500' },
-    { id: 'No Date Set', label: 'No Date Set', arr: unscheduledLots, color: 'bg-slate-400' },
-  ];
 
   return (
-    <section className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-3 sm:p-3.5 shadow-2xs space-y-3">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-        {chips.map((chip) => {
-          const Icon = chip.icon;
-          const isActive = statusFilter === chip.id;
-          const isZero = chip.count === 0 && chip.id !== 'ALL';
+    <section className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200/90 dark:border-slate-800 p-3 shadow-2xs space-y-2.5 select-none">
+      {/* Top 5 Executive KPI Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+        {/* Card 1: ALL PLANTER LOTS */}
+        {(() => {
+          const isActive = statusFilter === 'ALL';
+          return (
+            <button
+              type="button"
+              onClick={() => handleCardClick('ALL')}
+              className={
+                'relative text-left rounded-xl p-3 border transition-all overflow-hidden flex flex-col justify-between ' +
+                (isActive
+                  ? 'bg-slate-900 dark:bg-slate-800 text-white border-slate-900 dark:border-emerald-500/70 shadow-xs'
+                  : 'bg-slate-50/60 dark:bg-slate-800/40 hover:bg-slate-100/70 dark:hover:bg-slate-800 text-slate-900 dark:text-white border-slate-200/80 dark:border-slate-700/80')
+              }
+            >
+              <div className="flex items-center justify-between gap-2 w-full">
+                <span
+                  className={
+                    'text-[10px] font-bold uppercase tracking-wider truncate ' +
+                    (isActive
+                      ? 'text-slate-300'
+                      : 'text-slate-500 dark:text-slate-400')
+                  }
+                >
+                  All Planter Lots
+                </span>
+                <span
+                  className={
+                    'text-[10px] font-mono font-semibold px-1.5 py-0.2 rounded ' +
+                    (isActive
+                      ? 'bg-white/15 text-white'
+                      : 'bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300')
+                  }
+                >
+                  100%
+                </span>
+              </div>
+
+              <div className="mt-2 flex items-baseline justify-between gap-2 w-full tabular-nums">
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-2xl font-extrabold tracking-tight leading-none">
+                    {isLoading ? '—' : metrics.totalLots}
+                  </span>
+                  <span
+                    className={
+                      'text-[11px] font-medium ' +
+                      (isActive ? 'text-slate-300' : 'text-slate-400')
+                    }
+                  >
+                    lots
+                  </span>
+                </div>
+
+                <div className="text-right">
+                  <div
+                    className={
+                      'text-xs font-bold leading-tight ' +
+                      (isActive
+                        ? 'text-emerald-300'
+                        : 'text-slate-700 dark:text-slate-200')
+                    }
+                  >
+                    {metrics.totalHa.toFixed(2)} ha
+                  </div>
+                  <div
+                    className={
+                      'text-[10px] leading-tight mt-0.5 ' +
+                      (isActive ? 'text-slate-400' : 'text-slate-400')
+                    }
+                  >
+                    ~{Math.round(metrics.totalTons).toLocaleString()} MT
+                  </div>
+                </div>
+              </div>
+            </button>
+          );
+        })()}
+
+        {/* Cards 2–5: Status Breakdown Cards */}
+        {metrics.byStatus.map((stat) => {
+          const isActive = statusFilter === stat.key;
+          const isZero = stat.count === 0;
 
           return (
             <button
-              key={chip.id}
+              key={stat.key}
               type="button"
-              onClick={() =>
-                onSelectStatus(isActive && chip.id !== 'ALL' ? 'ALL' : chip.id)
-              }
-              title={formatTooltip(
-                chip.label,
-                chip.id === 'ALL'
-                  ? lots
-                  : lots.filter((l) => l.status === chip.id)
-              )}
+              onClick={() => handleCardClick(stat.key)}
+              onMouseEnter={() => setHoveredKey(stat.key)}
+              onMouseLeave={() => setHoveredKey(null)}
               className={
-                'relative text-left rounded-lg px-3 py-2.5 border transition-all flex flex-col justify-between overflow-hidden ' +
-                (isActive ? chip.activeClass : chip.idleClass)
+                'relative text-left rounded-xl p-3 border transition-all overflow-hidden flex flex-col justify-between ' +
+                (isActive
+                  ? `${stat.activeBg} ${stat.accentBorder} ring-2 ring-emerald-500/15 shadow-2xs`
+                  : isZero
+                  ? 'bg-slate-50/40 dark:bg-slate-900/40 border-slate-200/60 dark:border-slate-800/70 opacity-60 hover:opacity-90'
+                  : 'bg-white dark:bg-slate-900 hover:bg-slate-50/80 dark:hover:bg-slate-800/50 border-slate-200/80 dark:border-slate-800')
               }
             >
-              <div className="flex items-center justify-between gap-1.5">
-                <span className="text-[11px] font-bold uppercase tracking-wider truncate">
-                  {chip.label}
-                </span>
-                <Icon
+              {/* Top Header Row: Status Dot + Label + Share % */}
+              <div className="flex items-center justify-between gap-1.5 w-full">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span
+                    className={'w-2 h-2 rounded-full shrink-0 ' + stat.dotClass}
+                  />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 truncate">
+                    {stat.label}
+                  </span>
+                </div>
+
+                <span
                   className={
-                    'w-3.5 h-3.5 shrink-0 ' + (isActive ? 'text-white' : chip.iconClass)
+                    'text-[10px] font-mono font-semibold px-1.5 py-0.2 rounded shrink-0 tabular-nums ' +
+                    stat.badgeClass
                   }
-                />
+                >
+                  {stat.pct > 0 && stat.pct < 1
+                    ? '<1%'
+                    : `${Math.round(stat.pct)}%`}
+                </span>
               </div>
 
-              <div className="mt-1 flex items-baseline justify-between gap-2">
-                <span
-                  className={
-                    'text-xl font-black tracking-tight ' +
-                    (isZero && !isActive ? 'text-slate-400 font-semibold' : '')
-                  }
-                >
-                  {isLoading && lots.length === 0 ? '—' : chip.count}
-                </span>
-                <span
-                  className={
-                    'text-[11px] font-medium truncate ' +
-                    (isActive ? 'text-white/85' : 'text-slate-500')
-                  }
-                >
-                  {mixMetric === 'ha'
-                    ? `${chip.ha} ha`
-                    : `${chip.mt.toLocaleString()} MT`}
-                </span>
+              {/* Bottom Value Row: Count on Left, Ha & MT on Right */}
+              <div className="mt-2 flex items-baseline justify-between gap-2 w-full tabular-nums">
+                <div className="flex items-baseline gap-1">
+                  <span
+                    className={
+                      'text-2xl font-extrabold tracking-tight leading-none ' +
+                      (isZero
+                        ? 'text-slate-400 dark:text-slate-600'
+                        : stat.numColor)
+                    }
+                  >
+                    {isLoading ? '—' : stat.count}
+                  </span>
+                  <span className="text-[11px] font-medium text-slate-400">
+                    {stat.count === 1 ? 'lot' : 'lots'}
+                  </span>
+                </div>
+
+                <div className="text-right">
+                  <div className="text-xs font-bold text-slate-700 dark:text-slate-200 leading-tight">
+                    {stat.ha.toFixed(2)} ha
+                  </div>
+                  <div className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight mt-0.5">
+                    ~{Math.round(stat.tons).toLocaleString()} MT
+                  </div>
+                </div>
               </div>
             </button>
           );
         })}
       </div>
 
-      {/* Hectare / Tonnage Proportional Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+      {/* Bottom Hectarage Mix & Tonnage Distribution Bar */}
+      <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+        {/* Left: Total Summary Pill */}
         <div className="flex items-center gap-2 shrink-0">
-          <span className="font-bold text-slate-700 dark:text-slate-300">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
             Total Field Hectarage Mix:
           </span>
-          <div className="inline-flex rounded-md border border-slate-200 dark:border-slate-700 p-0.5 bg-slate-100 dark:bg-slate-800 text-[11px]">
-            <button
-              type="button"
-              onClick={() => setMixMetric('ha')}
-              className={
-                'px-2 py-0.5 rounded font-semibold transition-all ' +
-                (mixMetric === 'ha'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
-                  : 'text-slate-600 dark:text-slate-400')
-              }
-            >
-              {totalHa} ha
-            </button>
-            <button
-              type="button"
-              onClick={() => setMixMetric('tons')}
-              className={
-                'px-2 py-0.5 rounded font-semibold transition-all ' +
-                (mixMetric === 'tons'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
-                  : 'text-slate-600 dark:text-slate-400')
-              }
-            >
-              {totalTons.toLocaleString()} MT
-            </button>
+          <div className="inline-flex items-center divide-x divide-slate-200 dark:divide-slate-700 rounded-md bg-slate-100/90 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 text-[11px] tabular-nums">
+            <span className="px-2 py-0.5 font-bold text-slate-900 dark:text-white">
+              {metrics.totalHa.toFixed(2)} ha
+            </span>
+            <span className="px-2 py-0.5 font-semibold text-slate-600 dark:text-slate-300">
+              {Math.round(metrics.totalTons).toLocaleString()} MT
+            </span>
           </div>
         </div>
 
-        <div className="flex-1 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
-          {lots.length === 0 ? (
-            <div className="w-full h-full bg-slate-200 dark:bg-slate-800" />
-          ) : (
-            segments.map((seg) => {
-              const widthPct = metricPct(seg.arr);
-              if (widthPct <= 0) return null;
-              return (
-                <div
-                  key={seg.id}
-                  style={{ width: widthPct + '%' }}
-                  title={formatTooltip(seg.label, seg.arr)}
-                  onClick={() =>
-                    onSelectStatus(statusFilter === seg.id ? 'ALL' : seg.id)
-                  }
-                  className={
-                    seg.color +
-                    ' h-full transition-all duration-300 cursor-pointer hover:opacity-90'
-                  }
-                />
-              );
-            })
-          )}
+        {/* Center: Multi-Segment Progress Bar */}
+        <div className="flex-1 min-w-[200px] h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex p-0.5 gap-0.5 border border-slate-200/60 dark:border-slate-700/60">
+          {metrics.byStatus.map((stat) => {
+            if (stat.ha <= 0) return null;
+            const isSelected = statusFilter === stat.key;
+            return (
+              <button
+                key={stat.key}
+                type="button"
+                onClick={() => handleCardClick(stat.key)}
+                onMouseEnter={() => setHoveredKey(stat.key)}
+                onMouseLeave={() => setHoveredKey(null)}
+                style={{ width: `${Math.max(stat.pct, 2)}%` }}
+                title={`${stat.label}: ${stat.count} lot(s) • ${stat.ha.toFixed(2)} ha • ~${Math.round(stat.tons).toLocaleString()} MT (${stat.pct.toFixed(1)}%)`}
+                className={
+                  'h-full first:rounded-l-full last:rounded-r-full transition-all cursor-pointer ' +
+                  stat.barClass +
+                  (isSelected ? ' ring-1 ring-offset-1 ring-slate-900' : '')
+                }
+              />
+            );
+          })}
         </div>
 
-        <span className="text-[11px] text-slate-500 shrink-0 hidden md:inline">
-          Hover bar for lots • ha • MT
-        </span>
+        {/* Right: Dynamic Hover Readout OR Clickable Compact Legend */}
+        <div className="shrink-0 min-w-[230px] flex items-center justify-end text-[11px] tabular-nums">
+          {hoveredSegment ? (
+            <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-900 dark:bg-slate-800 text-white font-medium animate-drawer-item">
+              <span
+                className={'w-2 h-2 rounded-full ' + hoveredSegment.dotClass}
+              />
+              <span className="font-bold">{hoveredSegment.shortLabel}:</span>
+              <span>{hoveredSegment.count} lots</span>
+              <span>•</span>
+              <span className="text-emerald-300 font-bold">
+                {hoveredSegment.ha.toFixed(2)} ha
+              </span>
+              <span>•</span>
+              <span className="text-slate-300">
+                ~{Math.round(hoveredSegment.tons).toLocaleString()} MT
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+              {metrics.byStatus.map((stat) => (
+                <button
+                  key={stat.key}
+                  type="button"
+                  onClick={() => handleCardClick(stat.key)}
+                  onMouseEnter={() => setHoveredKey(stat.key)}
+                  onMouseLeave={() => setHoveredKey(null)}
+                  className="inline-flex items-center gap-1 hover:text-slate-900 dark:hover:text-white transition-colors"
+                >
+                  <span
+                    className={'w-2 h-2 rounded-full ' + stat.dotClass}
+                  />
+                  <span className="font-medium">{stat.shortLabel}</span>
+                  <span className="font-mono text-[10px] text-slate-400">
+                    ({Math.round(stat.pct)}%)
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );

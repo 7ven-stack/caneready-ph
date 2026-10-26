@@ -81,15 +81,19 @@ function getLotCoordinates(lot, index) {
   if (lot.coordinates && Array.isArray(lot.coordinates) && lot.coordinates.length >= 3) {
     return lot.coordinates;
   }
-  const row = Math.floor(index / 3);
-  const col = index % 3;
-  const baseLat = 10.8215 - row * 0.0035;
-  const baseLng = 123.0085 + col * 0.0038;
+  if (lot.polygon && Array.isArray(lot.polygon) && lot.polygon.length >= 3) {
+    return lot.polygon;
+  }
+  const lat = Number(lot.latitude) || 10.8185;
+  const lng = Number(lot.longitude) || 123.0145;
+  const areaHa = Math.max(0.5, Number(lot.areaHa) || 6);
+  const halfSideDeg = Math.sqrt(areaHa * 10000) / 2 / 111320;
+  const skew = ((index % 5) - 2) * 0.00018;
   return [
-    [baseLat, baseLng],
-    [baseLat + 0.0003, baseLng + 0.0034],
-    [baseLat - 0.0028, baseLng + 0.0036],
-    [baseLat - 0.0030, baseLng + 0.0002],
+    [Number((lat + halfSideDeg + skew).toFixed(6)), Number((lng - halfSideDeg).toFixed(6))],
+    [Number((lat + halfSideDeg).toFixed(6)), Number((lng + halfSideDeg + skew).toFixed(6))],
+    [Number((lat - halfSideDeg - skew).toFixed(6)), Number((lng + halfSideDeg).toFixed(6))],
+    [Number((lat - halfSideDeg).toFixed(6)), Number((lng - halfSideDeg - skew).toFixed(6))],
   ];
 }
 
@@ -1866,4 +1870,5 @@ export default function ParcelMapView({
     </div>
   );
 }
+
 
