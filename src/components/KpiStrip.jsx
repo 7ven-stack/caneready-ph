@@ -1,4 +1,5 @@
 ﻿import React, { useMemo, useState } from 'react';
+import { getCanonicalStatusBucket } from '../utils/caneCalculations';
 
 const STATUS_CATEGORIES = [
   {
@@ -61,18 +62,22 @@ export default function KpiStrip({
 
   const metrics = useMemo(() => {
     const totalLots = lots.length;
-    const totalHa = lots.reduce((sum, l) => sum + (Number(l.areaHa) || 0), 0);
-    const totalTons = lots.reduce(
-      (sum, l) => sum + (Number(l.estimatedTons) || 0),
-      0
+    const totalHa = Number(
+      lots.reduce((sum, l) => sum + (Number(l.areaHa) || 0), 0).toFixed(2)
+    );
+    const totalTons = Math.round(
+      lots.reduce((sum, l) => sum + (Number(l.estimatedTons) || 0), 0)
     );
 
     const byStatus = STATUS_CATEGORIES.map((cat) => {
-      const matched = lots.filter((l) => l.status === cat.key);
-      const ha = matched.reduce((sum, l) => sum + (Number(l.areaHa) || 0), 0);
-      const tons = matched.reduce(
-        (sum, l) => sum + (Number(l.estimatedTons) || 0),
-        0
+      const matched = lots.filter(
+        (l) => getCanonicalStatusBucket(l) === cat.key
+      );
+      const ha = Number(
+        matched.reduce((sum, l) => sum + (Number(l.areaHa) || 0), 0).toFixed(2)
+      );
+      const tons = Math.round(
+        matched.reduce((sum, l) => sum + (Number(l.estimatedTons) || 0), 0)
       );
       const pct = totalHa > 0 ? (ha / totalHa) * 100 : 0;
 
@@ -119,7 +124,7 @@ export default function KpiStrip({
               type="button"
               onClick={() => handleCardClick('ALL')}
               className={
-                'relative text-left rounded-xl p-3 border transition-all overflow-hidden flex flex-col justify-between ' +
+                'relative text-left rounded-xl p-3 border transition-all overflow-hidden flex flex-col justify-between cursor-pointer ' +
                 (isActive
                   ? 'bg-slate-900 dark:bg-slate-800 text-white border-slate-900 dark:border-emerald-500/70 shadow-xs'
                   : 'bg-slate-50/60 dark:bg-slate-800/40 hover:bg-slate-100/70 dark:hover:bg-slate-800 text-slate-900 dark:text-white border-slate-200/80 dark:border-slate-700/80')
@@ -180,7 +185,7 @@ export default function KpiStrip({
                       (isActive ? 'text-slate-400' : 'text-slate-400')
                     }
                   >
-                    ~{Math.round(metrics.totalTons).toLocaleString()} MT
+                    ~{metrics.totalTons.toLocaleString()} MT
                   </div>
                 </div>
               </div>
@@ -201,7 +206,7 @@ export default function KpiStrip({
               onMouseEnter={() => setHoveredKey(stat.key)}
               onMouseLeave={() => setHoveredKey(null)}
               className={
-                'relative text-left rounded-xl p-3 border transition-all overflow-hidden flex flex-col justify-between ' +
+                'relative text-left rounded-xl p-3 border transition-all overflow-hidden flex flex-col justify-between cursor-pointer ' +
                 (isActive
                   ? `${stat.activeBg} ${stat.accentBorder} ring-2 ring-emerald-500/15 shadow-2xs`
                   : isZero
@@ -209,7 +214,6 @@ export default function KpiStrip({
                   : 'bg-white dark:bg-slate-900 hover:bg-slate-50/80 dark:hover:bg-slate-800/50 border-slate-200/80 dark:border-slate-800')
               }
             >
-              {/* Top Header Row: Status Dot + Label + Share % */}
               <div className="flex items-center justify-between gap-1.5 w-full">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span
@@ -232,7 +236,6 @@ export default function KpiStrip({
                 </span>
               </div>
 
-              {/* Bottom Value Row: Count on Left, Ha & MT on Right */}
               <div className="mt-2 flex items-baseline justify-between gap-2 w-full tabular-nums">
                 <div className="flex items-baseline gap-1">
                   <span
@@ -255,7 +258,7 @@ export default function KpiStrip({
                     {stat.ha.toFixed(2)} ha
                   </div>
                   <div className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight mt-0.5">
-                    ~{Math.round(stat.tons).toLocaleString()} MT
+                    ~{stat.tons.toLocaleString()} MT
                   </div>
                 </div>
               </div>
@@ -266,7 +269,6 @@ export default function KpiStrip({
 
       {/* Bottom Hectarage Mix & Tonnage Distribution Bar */}
       <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
-        {/* Left: Total Summary Pill */}
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
             Total Field Hectarage Mix:
@@ -276,12 +278,11 @@ export default function KpiStrip({
               {metrics.totalHa.toFixed(2)} ha
             </span>
             <span className="px-2 py-0.5 font-semibold text-slate-600 dark:text-slate-300">
-              {Math.round(metrics.totalTons).toLocaleString()} MT
+              {metrics.totalTons.toLocaleString()} MT
             </span>
           </div>
         </div>
 
-        {/* Center: Multi-Segment Progress Bar */}
         <div className="flex-1 min-w-[200px] h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex p-0.5 gap-0.5 border border-slate-200/60 dark:border-slate-700/60">
           {metrics.byStatus.map((stat) => {
             if (stat.ha <= 0) return null;
@@ -294,7 +295,7 @@ export default function KpiStrip({
                 onMouseEnter={() => setHoveredKey(stat.key)}
                 onMouseLeave={() => setHoveredKey(null)}
                 style={{ width: `${Math.max(stat.pct, 2)}%` }}
-                title={`${stat.label}: ${stat.count} lot(s) • ${stat.ha.toFixed(2)} ha • ~${Math.round(stat.tons).toLocaleString()} MT (${stat.pct.toFixed(1)}%)`}
+                title={`${stat.label}: ${stat.count} lot(s) • ${stat.ha.toFixed(2)} ha • ~${stat.tons.toLocaleString()} MT (${stat.pct.toFixed(1)}%)`}
                 className={
                   'h-full first:rounded-l-full last:rounded-r-full transition-all cursor-pointer ' +
                   stat.barClass +
@@ -305,7 +306,6 @@ export default function KpiStrip({
           })}
         </div>
 
-        {/* Right: Dynamic Hover Readout OR Clickable Compact Legend */}
         <div className="shrink-0 min-w-[230px] flex items-center justify-end text-[11px] tabular-nums">
           {hoveredSegment ? (
             <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-900 dark:bg-slate-800 text-white font-medium animate-drawer-item">
@@ -320,7 +320,7 @@ export default function KpiStrip({
               </span>
               <span>•</span>
               <span className="text-slate-300">
-                ~{Math.round(hoveredSegment.tons).toLocaleString()} MT
+                ~{hoveredSegment.tons.toLocaleString()} MT
               </span>
             </div>
           ) : (
@@ -332,7 +332,7 @@ export default function KpiStrip({
                   onClick={() => handleCardClick(stat.key)}
                   onMouseEnter={() => setHoveredKey(stat.key)}
                   onMouseLeave={() => setHoveredKey(null)}
-                  className="inline-flex items-center gap-1 hover:text-slate-900 dark:hover:text-white transition-colors"
+                  className="inline-flex items-center gap-1 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                 >
                   <span
                     className={'w-2 h-2 rounded-full ' + stat.dotClass}

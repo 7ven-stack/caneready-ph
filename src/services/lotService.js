@@ -12,6 +12,13 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export const LOTS_CACHE_KEY = 'caneready_lots_v1';
 export const PENDING_OPS_KEY = 'caneready_pending_ops_v1';
+const MULTI_POLYGONS_KEY = 'caneready_multipolygons_v1';
+const ABSORBED_IDS_KEY = 'caneready_absorbed_lot_ids_v1';
+
+// Required once in the Supabase SQL editor so merged lots can store every slice:
+//   alter table farm_lots add column if not exists multi_coordinates jsonb;
+export const MULTI_COORDINATES_SQL =
+  'alter table farm_lots add column if not exists multi_coordinates jsonb;';
 
 export const supabase =
   SUPABASE_URL && SUPABASE_KEY && !SUPABASE_KEY.includes('PASTE_YOUR')
@@ -25,6 +32,26 @@ export function safeJsonParse(raw, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+// Accepts an array (or JSON string) of rings. Returns an array of valid rings
+// when there are 2+ of them, otherwise null (a single ring is just `coordinates`).
+export function normalizeMultiCoordinates(raw) {
+  const parsed = typeof raw === 'string' ? safeJsonParse(raw, null) : raw;
+  if (!Array.isArray(parsed)) return null;
+  const rings = parsed.filter(
+    (ring) =>
+      Array.isArray(ring) &&
+      ring.length >= 3 &&
+      ring.every(
+        (pt) =>
+          Array.isArray(pt) &&
+          pt.length >= 2 &&
+          Number.isFinite(Number(pt[0])) &&
+          Number.isFinite(Number(pt[1]))
+      )
+  );
+  return rings.length > 1 ? rings : null;
 }
 
 export function loadCachedLots() {
@@ -81,15 +108,21 @@ export function enqueuePendingOperation(op) {
   return next;
 }
 
+// Also looks at IDs that were absorbed by a merge, so a freshly registered lot
+// can never reuse an ID that is hidden by the absorbed list.
 export function generateSequentialLotId(existingLots = [], cityOrSector = 'Silay City') {
   const match = String(cityOrSector).match(/^([A-Z])/i);
   const letter = match ? match[1].toUpperCase() : 'A';
   let maxNum = 100;
   const regex = /^LOT-[A-Z](\d+)$/i;
 
-  for (const lot of existingLots) {
-    if (!lot?.id) continue;
-    const m = String(lot.id).trim().match(regex);
+  const knownIds = [
+    ...existingLots.filter((lot) => lot?.id).map((lot) => String(lot.id).trim()),
+    ...Array.from(getAbsorbedLotIds()),
+  ];
+
+  for (const id of knownIds) {
+    const m = id.match(regex);
     if (m) {
       const n = parseInt(m[1], 10);
       if (!isNaN(n) && n > maxNum) maxNum = n;
@@ -97,7 +130,7 @@ export function generateSequentialLotId(existingLots = [], cityOrSector = 'Silay
   }
 
   let candidate = `LOT-${letter}${maxNum + 1}`;
-  const existingIds = new Set(existingLots.map((l) => String(l.id).toUpperCase()));
+  const existingIds = new Set(knownIds.map((id) => id.toUpperCase()));
   let step = 2;
   while (existingIds.has(candidate.toUpperCase())) {
     candidate = `LOT-${letter}${maxNum + step}`;
@@ -144,6 +177,16 @@ function fromSqlRow(row) {
     latitude: row.latitude ?? labelPos?.lat,
     longitude: row.longitude ?? labelPos?.lng,
   });
+
+  // Merged lots: every slice ring lives in the multi_coordinates column
+  // (camelCase `multiCoordinates` is what cached / queued lots already use).
+  const multiCoordinates = normalizeMultiCoordinates(
+    row.multi_coordinates ??
+      row.multiCoordinates ??
+      labelPos?.multiCoordinates ??
+      dispatchObj?.multiCoordinates ??
+      null
+  );
 
   const contactNumber =
     row.contactNumber ??
@@ -199,6 +242,7 @@ function fromSqlRow(row) {
     latitude: centroid.latitude,
     longitude: centroid.longitude,
     coordinates,
+    multiCoordinates,
     dispatch: {
       scheduledDate: plannedHarvestDate,
       notes: harvestNotes,
@@ -457,31 +501,41 @@ export async function updateLotDetails(lotId, updates) {
     city: updates.city || 'Silay City',
   };
 
+  const row = {
+    hacienda: updates.hacienda,
+    planter: updates.planter,
+    sector: updates.city
+      ? `${updates.city} - ${updates.barangay || ''}`
+      : updates.sector,
+    variety: updates.variety,
+    crop_class: updates.cropClass,
+    area_ha: updates.areaHa,
+    expected_tc_ha: updates.expectedTcHa || 75,
+    planting_date: updates.plantingDate,
+    crop_age_months: updates.cropAgeMonths || 0,
+    svg_points: updates.coordinates ? JSON.stringify(updates.coordinates) : undefined,
+    label_pos: metaPayload,
+    dispatch: dispatchPayload,
+  };
+
+  // Only touch the multi_coordinates column when the caller explicitly passes it,
+  // so ordinary edits never wipe (or require) the column.
+  if (Object.prototype.hasOwnProperty.call(updates, 'multiCoordinates')) {
+    row.multi_coordinates = normalizeMultiCoordinates(updates.multiCoordinates);
+  }
+
   if (supabase) {
     try {
       const { data, error } = await supabase
         .from('farm_lots')
-        .update({
-          hacienda: updates.hacienda,
-          planter: updates.planter,
-          sector: updates.city
-            ? `${updates.city} - ${updates.barangay || ''}`
-            : updates.sector,
-          variety: updates.variety,
-          crop_class: updates.cropClass,
-          area_ha: updates.areaHa,
-          expected_tc_ha: updates.expectedTcHa || 75,
-          planting_date: updates.plantingDate,
-          crop_age_months: updates.cropAgeMonths || 0,
-          svg_points: updates.coordinates ? JSON.stringify(updates.coordinates) : undefined,
-          label_pos: metaPayload,
-          dispatch: dispatchPayload,
-        })
+        .update(row)
         .eq('id', lotId)
         .select();
 
       if (error) {
-        supabaseError = formatSupabaseError(error);
+        supabaseError = /multi_coordinates/i.test(error.message || '')
+          ? `Database column "multi_coordinates" is missing. Run in the Supabase SQL editor: ${MULTI_COORDINATES_SQL}`
+          : formatSupabaseError(error);
       } else if (!data || data.length === 0) {
         supabaseError = `Update for ${lotId} blocked by RLS policy or row missing.`;
       } else {
@@ -637,6 +691,16 @@ export async function deleteFarmLot(lotId) {
       if (error) {
         supabaseError = formatSupabaseError(error);
       } else if (!data || data.length === 0) {
+        // 0 rows deleted: either the row is already gone (fine, delete is idempotent)
+        // or RLS blocked it. Check which, so a replayed delete cannot get stuck forever.
+        const { data: stillThere, error: checkError } = await supabase
+          .from('farm_lots')
+          .select('id')
+          .eq('id', lotId)
+          .limit(1);
+        if (!checkError && Array.isArray(stillThere) && stillThere.length === 0) {
+          return { ok: true, error: null, source: 'Supabase Cloud DB' };
+        }
         supabaseError = `Delete for ${lotId} blocked by Supabase RLS (missing DELETE policy).`;
       } else {
         return { ok: true, error: null, source: 'Supabase Cloud DB' };
@@ -677,8 +741,21 @@ export async function replayPendingOperations() {
   let replayed = 0;
   const remainingOps = [];
   const errors = [];
+  // Lots whose op failed during this replay. An op with `dependsOn` (e.g. deleting a
+  // slice that was merged into another lot) waits until that lot has synced first.
+  const failedLotIds = new Set();
 
   for (const op of queue) {
+    if (op.dependsOn && failedLotIds.has(String(op.dependsOn))) {
+      remainingOps.push(op);
+      errors.push({
+        lotId: op.lotId,
+        type: op.type,
+        error: `Waiting for ${op.dependsOn} to sync first`,
+      });
+      continue;
+    }
+
     let result = { ok: false, error: 'Unknown operation' };
 
     if (op.type === 'CREATE_LOT') {
@@ -705,6 +782,7 @@ export async function replayPendingOperations() {
     if (result.ok) {
       replayed++;
     } else {
+      failedLotIds.add(String(op.lotId));
       remainingOps.push({ ...op, lastError: result.error });
       errors.push({ lotId: op.lotId, type: op.type, error: result.error });
     }
@@ -714,14 +792,56 @@ export async function replayPendingOperations() {
   return { replayed, remaining: remainingOps.length, errors };
 }
 
-
 export function clearPendingOperations() {
   try {
     Object.keys(localStorage).forEach((key) => {
-      if (key.toLowerCase().includes('pending') || key.toLowerCase().includes('cache')) {
+      const k = key.toLowerCase();
+      // Only touch this app's keys (localhost is shared with other projects).
+      if (k.startsWith('caneready_') && (k.includes('pending') || k.includes('cache'))) {
         localStorage.removeItem(key);
       }
     });
   } catch (e) {}
   return [];
+}
+
+export function getSavedMultiPolygonsMap() {
+  try {
+    const raw = localStorage.getItem(MULTI_POLYGONS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveMultiPolygonsForLot(lotId, rings) {
+  try {
+    const map = getSavedMultiPolygonsMap();
+    if (Array.isArray(rings) && rings.length > 1) {
+      map[String(lotId)] = rings;
+    } else {
+      delete map[String(lotId)];
+    }
+    localStorage.setItem(MULTI_POLYGONS_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+export function getAbsorbedLotIds() {
+  try {
+    const raw = localStorage.getItem(ABSORBED_IDS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function markLotsAbsorbed(lotIds = []) {
+  try {
+    const set = getAbsorbedLotIds();
+    for (const id of lotIds) {
+      set.add(String(id));
+    }
+    localStorage.setItem(ABSORBED_IDS_KEY, JSON.stringify(Array.from(set)));
+  } catch {}
 }

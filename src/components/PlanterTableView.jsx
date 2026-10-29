@@ -14,14 +14,16 @@ export default function PlanterTableView({
   onEditLot,
   onQuickScheduleCut,
   onBulkScheduleHarvest,
+  onMergeLots,
   density = 'compact',
+  pageSize = 'ALL',
+  onPageSizeChange,
 }) {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkDate, setBulkDate] = useState('2026-11-15');
   const [bulkNotes, setBulkNotes] = useState('Planter group harvest schedule');
-  const [pageSize, setPageSize] = useState(15);
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
@@ -176,6 +178,18 @@ export default function PlanterTableView({
             >
               Apply Date
             </button>
+            {selectedIds.length >= 2 && onMergeLots && (
+              <button
+                type="button"
+                onClick={() => {
+                  onMergeLots(selectedIds, selectedIds[0]);
+                  setSelectedIds([]);
+                }}
+                className="px-3 py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-white font-semibold transition-colors shadow-2xs"
+              >
+                Merge {selectedIds.length} Fields
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setSelectedIds([])}
@@ -409,7 +423,7 @@ export default function PlanterTableView({
                         }
                       >
                         <span className={'w-1.5 h-1.5 rounded-full ' + styles.dot} />
-                        {lot.status}
+                        {lot.statusBadgeLabel || lot.status}
                       </span>
                     </td>
 
@@ -468,7 +482,7 @@ export default function PlanterTableView({
             <select
               value={pageSize}
               onChange={(e) => {
-                setPageSize(
+                onPageSizeChange && onPageSizeChange(
                   e.target.value === 'ALL' ? 'ALL' : Number(e.target.value)
                 );
                 setCurrentPage(1);
@@ -510,3 +524,6 @@ export default function PlanterTableView({
     </div>
   );
 }
+
+
+

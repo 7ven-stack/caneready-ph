@@ -1,229 +1,416 @@
-﻿export const STATUS_PRIORITY = Object.freeze({
-  'Harvest Due': 1,
-  'Upcoming (30d)': 2,
-  'Planned Later': 3,
-  'No Date Set': 4,
-});
+﻿export const DEFAULT_YIELD_TC_HA = 75;
 
-export const PLANTER_ASSOCIATIONS = Object.freeze([
+export const PLANTER_ASSOCIATIONS = [
   'APSSI',
-  'AHSSI',
   'APP-NEG',
-  'SIMAG',
-  'NOPA',
-  'UNIFED',
-  'CONFED',
-  'Independent',
-]);
+  'AHSSI',
+  'Private',
+];
 
-export function normalizeAssociation(rawAssoc) {
-  if (!rawAssoc || rawAssoc === 'AHPCO') return 'APSSI';
-  return String(rawAssoc).trim();
-}
-
-export function computeCropAgeMonths(plantingDate, fallbackMonths = null, now = new Date()) {
-  if (typeof plantingDate === 'string' && plantingDate.trim()) {
-    const parsed = new Date(plantingDate + 'T00:00:00');
-    if (!Number.isNaN(parsed.getTime())) {
-      const diffMs = now.getTime() - parsed.getTime();
-      const months = diffMs / (1000 * 60 * 60 * 24 * 30.4375);
-      return Number(Math.max(0, months).toFixed(1));
-    }
+export function sanitizeContactNumber(raw) {
+  if (raw === null || raw === undefined) return '';
+  const cleaned = String(raw)
+    .trim()
+    .replace(/^['"`’‘]+/, '')
+    .replace(/['"`]+$/, '')
+    .trim();
+  if (!cleaned || cleaned.toLowerCase() === 'not provided' || cleaned === '—') {
+    return '';
   }
-  const fallback = Number(fallbackMonths);
-  return Number.isFinite(fallback) && fallback >= 0 ? Number(fallback.toFixed(1)) : 0;
+  return cleaned;
 }
 
-export function computeCentroidLatLng(lot) {
-  if (Array.isArray(lot?.coordinates) && lot.coordinates.length >= 3) {
+export function pointInRing(point, ring = []) {
+  if (!point || !Array.isArray(ring) || ring.length < 3) return false;
+  const py = Array.isArray(point)
+    ? Number(point[0])
+    : Number(point?.lat ?? point?.latitude);
+  const px = Array.isArray(point)
+    ? Number(point[1])
+    : Number(point?.lng ?? point?.longitude);
+  if (!Number.isFinite(py) || !Number.isFinite(px)) return false;
+
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const yi = Array.isArray(ring[i])
+      ? Number(ring[i][0])
+      : Number(ring[i]?.lat ?? ring[i]?.latitude);
+    const xi = Array.isArray(ring[i])
+      ? Number(ring[i][1])
+      : Number(ring[i]?.lng ?? ring[i]?.longitude);
+    const yj = Array.isArray(ring[j])
+      ? Number(ring[j][0])
+      : Number(ring[j]?.lat ?? ring[j]?.latitude);
+    const xj = Array.isArray(ring[j])
+      ? Number(ring[j][1])
+      : Number(ring[j]?.lng ?? ring[j]?.longitude);
+
+    const intersect =
+      yi > py !== yj > py &&
+      px < ((xj - xi) * (py - yi)) / (yj - yi || 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+export function getCanonicalStatusBucket(
+  lotOrStatus,
+  daysUntilHarvest = null,
+  plannedHarvestDate = undefined
+) {
+  if (lotOrStatus && typeof lotOrStatus === 'object') {
+    const lot = lotOrStatus;
+    const hasDate = Boolean(
+      lot.plannedHarvestDate && String(lot.plannedHarvestDate).trim()
+    );
+    if (!hasDate) return 'No Date Set';
+
+    const days = Number(lot.daysUntilHarvest);
+    if (
+      lot.daysUntilHarvest !== null &&
+      lot.daysUntilHarvest !== undefined &&
+      Number.isFinite(days)
+    ) {
+      if (days <= 7) return 'Harvest Due';
+      if (days <= 30) return 'Upcoming';
+      return 'Planned Later';
+    }
+    return getCanonicalStatusBucket(lot.status, null, lot.plannedHarvestDate);
+  }
+
+  const rawStatus = String(lotOrStatus || '').trim();
+  if (plannedHarvestDate !== undefined && !plannedHarvestDate) {
+    return 'No Date Set';
+  }
+  if (typeof daysUntilHarvest === 'number' && Number.isFinite(daysUntilHarvest)) {
+    if (daysUntilHarvest <= 7) return 'Harvest Due';
+    if (daysUntilHarvest <= 30) return 'Upcoming';
+    return 'Planned Later';
+  }
+
+  if (!rawStatus || /no date|unscheduled|none|pending date/i.test(rawStatus)) {
+    return 'No Date Set';
+  }
+  if (/upcoming/i.test(rawStatus)) {
+    return 'Upcoming';
+  }
+  if (/due|overdue|today|urgent|harvesting/i.test(rawStatus)) {
+    return 'Harvest Due';
+  }
+  if (/later|planned|scheduled/i.test(rawStatus)) {
+    return 'Planned Later';
+  }
+  return 'No Date Set';
+}
+
+export function computeCentroidLatLng(lotOrCoords) {
+  const coords = Array.isArray(lotOrCoords)
+    ? lotOrCoords
+    : Array.isArray(lotOrCoords?.coordinates)
+    ? lotOrCoords.coordinates
+    : [];
+
+  if (coords.length >= 3) {
     let latSum = 0;
     let lngSum = 0;
-    let count = 0;
-    for (const pt of lot.coordinates) {
-      if (Array.isArray(pt) && pt.length >= 2) {
-        const lat = Number(pt[0]);
-        const lng = Number(pt[1]);
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-          latSum += lat;
-          lngSum += lng;
-          count++;
-        }
+    let validCount = 0;
+    for (const pt of coords) {
+      const lat = Array.isArray(pt)
+        ? Number(pt[0])
+        : Number(pt?.lat ?? pt?.latitude);
+      const lng = Array.isArray(pt)
+        ? Number(pt[1])
+        : Number(pt?.lng ?? pt?.longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        latSum += lat;
+        lngSum += lng;
+        validCount++;
       }
     }
-    if (count > 0) {
-      return {
-        latitude: Number((latSum / count).toFixed(6)),
-        longitude: Number((lngSum / count).toFixed(6)),
-      };
+    if (validCount > 0) {
+      const centerLat = Number((latSum / validCount).toFixed(6));
+      const centerLng = Number((lngSum / validCount).toFixed(6));
+      if (pointInRing([centerLat, centerLng], coords)) {
+        return { latitude: centerLat, longitude: centerLng };
+      }
+      const midPt = coords[Math.floor(coords.length / 2)];
+      const midLat = Array.isArray(midPt) ? Number(midPt[0]) : Number(midPt?.lat);
+      const midLng = Array.isArray(midPt) ? Number(midPt[1]) : Number(midPt?.lng);
+      if (Number.isFinite(midLat) && Number.isFinite(midLng)) {
+        const blendedLat = Number(((centerLat + midLat) / 2).toFixed(6));
+        const blendedLng = Number(((centerLng + midLng) / 2).toFixed(6));
+        if (pointInRing([blendedLat, blendedLng], coords)) {
+          return { latitude: blendedLat, longitude: blendedLng };
+        }
+      }
+      return { latitude: centerLat, longitude: centerLng };
     }
-  }
-
-  const lat = Number(lot?.latitude);
-  const lng = Number(lot?.longitude);
-  if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
-    return {
-      latitude: Number(lat.toFixed(6)),
-      longitude: Number(lng.toFixed(6)),
-    };
   }
 
   return {
-    latitude: 10.8185,
-    longitude: 123.0145,
+    latitude: Number(lotOrCoords?.latitude) || 10.8185,
+    longitude: Number(lotOrCoords?.longitude) || 123.0145,
   };
 }
 
-export function buildPolygonFromLatLng(lat, lng, areaHa = 10) {
-  const cleanLat = Number(lat) || 10.8185;
-  const cleanLng = Number(lng) || 123.0145;
-  const halfSideDeg = Math.max(
-    0.0006,
-    Math.min(0.004, Math.sqrt(Math.max(1, Number(areaHa))) * 0.00045)
-  );
+export function computePolygonAreaHa(coords = []) {
+  if (!Array.isArray(coords) || coords.length < 3) return 0;
+  const pts = coords
+    .map((pt) =>
+      Array.isArray(pt)
+        ? [Number(pt[0]), Number(pt[1])]
+        : [Number(pt?.lat ?? pt?.latitude), Number(pt?.lng ?? pt?.longitude)]
+    )
+    .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng));
+
+  if (pts.length < 3) return 0;
+
+  const refLatRad = (pts[0][0] * Math.PI) / 180;
+  const metersPerDegLat = 111132.92 - 559.82 * Math.cos(2 * refLatRad);
+  const metersPerDegLng = 111412.84 * Math.cos(refLatRad);
+
+  let areaSqMeters = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [lat1, lng1] = pts[i];
+    const [lat2, lng2] = pts[(i + 1) % pts.length];
+    const x1 = lng1 * metersPerDegLng;
+    const y1 = lat1 * metersPerDegLat;
+    const x2 = lng2 * metersPerDegLng;
+    const y2 = lat2 * metersPerDegLat;
+    areaSqMeters += x1 * y2 - x2 * y1;
+  }
+
+  const ha = Math.abs(areaSqMeters) / 2 / 10000;
+  return Number(ha.toFixed(2));
+}
+
+export const calculatePolygonAreaHa = computePolygonAreaHa;
+
+export function computeCropAgeMonths(plantingDate, fallbackMonths = 11) {
+  if (!plantingDate) return Number(fallbackMonths) || 11;
+  const start = new Date(plantingDate);
+  if (Number.isNaN(start.getTime())) return Number(fallbackMonths) || 11;
+  const now = new Date();
+  const diffMonths =
+    (now.getFullYear() - start.getFullYear()) * 12 +
+    (now.getMonth() - start.getMonth());
+  return Math.max(1, diffMonths);
+}
+
+export function buildPolygonFromLatLng(lat, lng, areaHa = 5) {
+  const centerLat = Number(lat) || 10.8185;
+  const centerLng = Number(lng) || 123.0145;
+  const safeAreaHa = Math.max(0.2, Number(areaHa) || 5);
+
+  const halfSideMeters = Math.sqrt(safeAreaHa * 10000) / 2;
+  const dLat = halfSideMeters / 111132;
+  const dLng =
+    halfSideMeters / (111412 * Math.cos((centerLat * Math.PI) / 180));
+
   return [
-    [Number((cleanLat + halfSideDeg).toFixed(6)), Number((cleanLng - halfSideDeg).toFixed(6))],
-    [Number((cleanLat + halfSideDeg).toFixed(6)), Number((cleanLng + halfSideDeg).toFixed(6))],
-    [Number((cleanLat - halfSideDeg).toFixed(6)), Number((cleanLng + halfSideDeg).toFixed(6))],
-    [Number((cleanLat - halfSideDeg).toFixed(6)), Number((cleanLng - halfSideDeg).toFixed(6))],
+    [Number((centerLat + dLat).toFixed(6)), Number((centerLng - dLng).toFixed(6))],
+    [Number((centerLat + dLat).toFixed(6)), Number((centerLng + dLng).toFixed(6))],
+    [Number((centerLat - dLat).toFixed(6)), Number((centerLng + dLng).toFixed(6))],
+    [Number((centerLat - dLat).toFixed(6)), Number((centerLng - dLng).toFixed(6))],
   ];
 }
 
-export function calculatePolygonAreaHa(coords) {
-  if (!Array.isArray(coords) || coords.length < 3) return 0;
-  const earthRadius = 6378137;
-  let areaSqMeters = 0;
-
-  for (let i = 0; i < coords.length; i++) {
-    const [lat1, lng1] = coords[i];
-    const [lat2, lng2] = coords[(i + 1) % coords.length];
-    const phi1 = (lat1 * Math.PI) / 180;
-    const phi2 = (lat2 * Math.PI) / 180;
-    const dLambda = ((lng2 - lng1) * Math.PI) / 180;
-    areaSqMeters += dLambda * (2 + Math.sin(phi1) + Math.sin(phi2));
-  }
-
-  areaSqMeters = Math.abs((areaSqMeters * earthRadius * earthRadius) / 2.0);
-  const hectares = areaSqMeters / 10000;
-  return Number(Math.max(0.1, hectares).toFixed(2));
-}
-
-export function evaluateLotMetrics(lot, now = new Date()) {
-  const areaHa = Number(lot.areaHa) || 0;
-  const expectedTcHa = Number(lot.expectedTcHa) || 75;
+export function evaluateLotMetrics(lot, referenceDate = new Date()) {
+  const areaHa = Number(lot?.areaHa) || 0;
+  const expectedTcHa = Number(lot?.expectedTcHa) || DEFAULT_YIELD_TC_HA;
   const estimatedTons = Math.round(areaHa * expectedTcHa);
-  const cropAgeMonths = computeCropAgeMonths(lot.plantingDate, lot.cropAgeMonths, now);
+  const centroid = computeCentroidLatLng(lot);
 
-  const contactNumber = lot.contactNumber || lot.dispatch?.contactNumber || 'Not provided';
-  const association = normalizeAssociation(lot.association || lot.dispatch?.association);
-  const barangay = lot.barangay || lot.dispatch?.barangay || 'Brgy. Hawaiian';
-  const city = lot.city || lot.dispatch?.city || 'Silay City';
-  const hacienda = lot.hacienda || 'Unnamed Hacienda';
+  const cleanContact = sanitizeContactNumber(lot?.contactNumber);
+  const rawDate = lot?.plannedHarvestDate
+    ? String(lot.plannedHarvestDate).trim()
+    : null;
 
-  const plannedHarvestDate =
-    lot.plannedHarvestDate || lot.dispatch?.scheduledDate || null;
-  const harvestNotes =
-    lot.harvestNotes ?? lot.dispatch?.notes ?? lot.dispatch?.brigadeLeader ?? '';
-
-  const { latitude, longitude } = computeCentroidLatLng(lot);
-  const coordText = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-  const fullLocationText = `${hacienda}, ${barangay}, ${city}`;
-
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   let daysUntilHarvest = null;
-  let harvestTimelineLabel = 'Not scheduled by planter';
+  let harvestTimelineLabel = 'No harvest date set';
   let status = 'No Date Set';
+  let statusBadgeLabel = 'No Date Set';
+  let statusPriority = 4;
 
-  if (plannedHarvestDate) {
-    const targetTime = new Date(plannedHarvestDate + 'T00:00:00').getTime();
-    if (!Number.isNaN(targetTime)) {
-      daysUntilHarvest = Math.round((targetTime - todayStart) / (1000 * 60 * 60 * 24));
+  if (rawDate) {
+    const todayMidnight = new Date(
+      referenceDate.getFullYear(),
+      referenceDate.getMonth(),
+      referenceDate.getDate()
+    );
+    const parts = rawDate.split('-').map(Number);
+    const targetMidnight =
+      parts.length === 3 && parts.every(Number.isFinite)
+        ? new Date(parts[0], parts[1] - 1, parts[2])
+        : new Date(rawDate);
+
+    if (!Number.isNaN(targetMidnight.getTime())) {
+      const diffMs = targetMidnight.getTime() - todayMidnight.getTime();
+      daysUntilHarvest = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
       if (daysUntilHarvest < 0) {
+        const overdueDays = Math.abs(daysUntilHarvest);
+        harvestTimelineLabel =
+          overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`;
         status = 'Harvest Due';
-        harvestTimelineLabel = `${Math.abs(daysUntilHarvest)}d overdue (${plannedHarvestDate})`;
+        statusBadgeLabel = 'Harvest Due';
+        statusPriority = 1;
       } else if (daysUntilHarvest === 0) {
-        status = 'Harvest Due';
         harvestTimelineLabel = 'Harvesting Today';
-      } else if (daysUntilHarvest <= 7) {
         status = 'Harvest Due';
-        harvestTimelineLabel = `In ${daysUntilHarvest} day${daysUntilHarvest === 1 ? '' : 's'}`;
+        statusBadgeLabel = 'Harvest Due';
+        statusPriority = 1;
+      } else if (daysUntilHarvest === 1) {
+        harvestTimelineLabel = 'In 1 day';
+        status = 'Harvest Due';
+        statusBadgeLabel = 'Harvest Due';
+        statusPriority = 1;
+      } else if (daysUntilHarvest <= 7) {
+        harvestTimelineLabel = `In ${daysUntilHarvest} days`;
+        status = 'Harvest Due';
+        statusBadgeLabel = 'Harvest Due';
+        statusPriority = 1;
       } else if (daysUntilHarvest <= 30) {
-        status = 'Upcoming (30d)';
         harvestTimelineLabel = `In ${daysUntilHarvest} days`;
+        status = 'Upcoming';
+        statusBadgeLabel = 'Upcoming (30d)';
+        statusPriority = 2;
       } else {
-        status = 'Planned Later';
         harvestTimelineLabel = `In ${daysUntilHarvest} days`;
+        status = 'Planned Later';
+        statusBadgeLabel = 'Planned Later';
+        statusPriority = 3;
       }
     }
   }
 
   return {
     ...lot,
-    hacienda,
-    contactNumber,
-    association,
-    barangay,
-    city,
-    fullLocationText,
+    contactNumber: cleanContact,
     areaHa,
     expectedTcHa,
     estimatedTons,
-    cropAgeMonths,
-    plannedHarvestDate,
-    harvestNotes,
+    latitude: Number(lot?.latitude ?? centroid.latitude),
+    longitude: Number(lot?.longitude ?? centroid.longitude),
+    plannedHarvestDate: rawDate || null,
     daysUntilHarvest,
     harvestTimelineLabel,
-    latitude,
-    longitude,
-    coordText,
     status,
-    statusDisplay: status,
-    statusPriority: STATUS_PRIORITY[status] ?? 4,
-    dispatch: {
-      ...(typeof lot.dispatch === 'object' && lot.dispatch ? lot.dispatch : {}),
-      scheduledDate: plannedHarvestDate,
-      notes: harvestNotes,
-      contactNumber,
-      association,
-      barangay,
-      city,
-    },
+    statusBadgeLabel,
+    statusPriority,
   };
 }
 
 export function getStatusStyles(status) {
-  switch (status) {
-    case 'Harvest Due':
-      return {
-        badge: 'bg-emerald-50 text-emerald-800 border-emerald-200',
-        dot: 'bg-emerald-500',
-        bar: 'bg-emerald-600',
-        polygonFill: '#10b981',
-        polygonStroke: '#047857',
-      };
-    case 'Upcoming (30d)':
-      return {
-        badge: 'bg-amber-50 text-amber-800 border-amber-200',
-        dot: 'bg-amber-500',
-        bar: 'bg-amber-500',
-        polygonFill: '#f59e0b',
-        polygonStroke: '#b45309',
-      };
-    case 'Planned Later':
-      return {
-        badge: 'bg-sky-50 text-sky-800 border-sky-200',
-        dot: 'bg-sky-500',
-        bar: 'bg-sky-600',
-        polygonFill: '#0ea5e9',
-        polygonStroke: '#0369a1',
-      };
-    default:
-      return {
-        badge: 'bg-slate-100 text-slate-700 border-slate-300',
-        dot: 'bg-slate-400',
-        bar: 'bg-slate-500',
-        polygonFill: '#94a3b8',
-        polygonStroke: '#475569',
-      };
+  const canonical = getCanonicalStatusBucket(status);
+
+  if (canonical === 'Harvest Due') {
+    return {
+      bar: 'bg-emerald-500',
+      badge:
+        'bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/80',
+      dot: 'bg-emerald-500',
+      stroke: '#059669',
+      fill: '#10b981',
+      polygonStroke: '#059669',
+      polygonFill: '#10b981',
+    };
   }
+
+  if (canonical === 'Upcoming') {
+    return {
+      bar: 'bg-amber-500',
+      badge:
+        'bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800/80',
+      dot: 'bg-amber-500',
+      stroke: '#d97706',
+      fill: '#f59e0b',
+      polygonStroke: '#d97706',
+      polygonFill: '#f59e0b',
+    };
+  }
+
+  if (canonical === 'Planned Later') {
+    return {
+      bar: 'bg-sky-500',
+      badge:
+        'bg-sky-50 dark:bg-sky-950/70 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800/80',
+      dot: 'bg-sky-500',
+      stroke: '#0284c7',
+      fill: '#38bdf8',
+      polygonStroke: '#0284c7',
+      polygonFill: '#38bdf8',
+    };
+  }
+
+  return {
+    bar: 'bg-slate-400 dark:bg-slate-600',
+    badge:
+      'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700',
+    dot: 'bg-slate-400 dark:bg-slate-500',
+    stroke: '#64748b',
+    fill: '#94a3b8',
+    polygonStroke: '#64748b',
+    polygonFill: '#94a3b8',
+  };
+}
+
+export function exportLotsToCsv(
+  lots = [],
+  filename = 'CaneReadyPH_Planter_Lots.csv'
+) {
+  if (!Array.isArray(lots) || lots.length === 0) return;
+  const headers = [
+    'Lot ID',
+    'Planter',
+    'Contact Number',
+    'Association',
+    'Hacienda',
+    'Barangay',
+    'City',
+    'Area (ha)',
+    'Estimated Tons (MT)',
+    'Latitude',
+    'Longitude',
+    'Planned Harvest Date',
+    'Status',
+  ];
+
+  const escapeCsv = (val) => {
+    const str = String(val ?? '').replace(/"/g, '""');
+    return `"${str}"`;
+  };
+
+  const rows = lots.map((lot) => [
+    lot.id,
+    lot.planter,
+    sanitizeContactNumber(lot.contactNumber),
+    lot.association || '',
+    lot.hacienda || '',
+    lot.barangay || '',
+    lot.city || '',
+    Number(lot.areaHa || 0).toFixed(2),
+    Math.round(Number(lot.estimatedTons || 0)),
+    Number(lot.latitude || 0).toFixed(6),
+    Number(lot.longitude || 0).toFixed(6),
+    lot.plannedHarvestDate || 'Unscheduled',
+    lot.statusBadgeLabel || lot.status || 'No Date Set',
+  ]);
+
+  const csvContent =
+    '\uFEFF' +
+    [
+      headers.map(escapeCsv).join(','),
+      ...rows.map((r) => r.map(escapeCsv).join(',')),
+    ].join('\r\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
