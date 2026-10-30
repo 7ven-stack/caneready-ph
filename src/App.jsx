@@ -24,6 +24,7 @@ import {
   getAbsorbedLotIds,
   markLotsAbsorbed,
 } from './services/lotService';
+import { exportReportCsv, exportReportXlsx, exportReportPdf } from './utils/reportExporter';
 import Navbar from './components/Navbar';
 import KpiStrip from './components/KpiStrip';
 import NeedsAttentionPanel from './components/NeedsAttentionPanel';
@@ -73,6 +74,7 @@ export default function App() {
 
   const [scheduleModalLotId, setScheduleModalLotId] = useState(null);
   const [isNewLotModalOpen, setIsNewLotModalOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [pendingPolygonCoords, setPendingPolygonCoords] = useState(null);
   const [pendingPolygonAreaHa, setPendingPolygonAreaHa] = useState(null);
   const [pendingPolygonLat, setPendingPolygonLat] = useState(null);
@@ -111,6 +113,18 @@ export default function App() {
       }
     } catch {}
   }, [darkMode]);
+
+  // Toggle with View Transitions API for a smooth GPU-composited cross-fade.
+  // Falls back to instant switch on browsers without support.
+  const toggleDarkMode = useCallback(() => {
+    const applyTheme = () => setDarkMode((prev) => !prev);
+
+    if (document.startViewTransition) {
+      document.startViewTransition(applyTheme);
+    } else {
+      applyTheme();
+    }
+  }, []);
 
   const syncLots = useCallback(async () => {
     setIsLoading(true);
@@ -280,6 +294,9 @@ export default function App() {
   }, []);
 
   const handleAddLot = async (newLot) => {
+    if (Array.isArray(newLot.multiCoordinates) && newLot.multiCoordinates.length > 1) {
+      saveMultiPolygonsForLot(newLot.id, newLot.multiCoordinates);
+    }
     const previousLots = rawLots;
     setRawLots((prev) => [{ ...newLot, pendingSync: true }, ...prev]);
 
@@ -316,6 +333,61 @@ export default function App() {
     setPendingPolygonLng(null);
     showToast('success', 'Planter Lot Registered', `${newLot.id} saved to ${res.source}.`);
     return res;
+  };
+
+  
+  const handleBatchAddLots = async (newLots = []) => {
+    if (!Array.isArray(newLots) || newLots.length === 0) return;
+
+    for (const lot of newLots) {
+      if (Array.isArray(lot.multiCoordinates) && lot.multiCoordinates.length > 1) {
+        saveMultiPolygonsForLot(lot.id, lot.multiCoordinates);
+      }
+    }
+
+    setRawLots((prev) => [
+      ...newLots.map((l) => ({ ...l, pendingSync: true })),
+      ...prev,
+    ]);
+
+    let savedCount = 0;
+    let queuedCount = 0;
+
+    for (const lot of newLots) {
+      const res = await createFarmLot(lot);
+      if (res.ok) {
+        savedCount++;
+        setRawLots((prev) =>
+          prev.map((l) => (l.id === lot.id ? { ...l, pendingSync: false } : l))
+        );
+      } else {
+        queuedCount++;
+        enqueuePendingOperation({
+          type: 'CREATE_LOT',
+          lotId: lot.id,
+          payload: lot,
+          lastError: res.error,
+        });
+      }
+    }
+
+    const remaining = getPendingOperations();
+    setPendingOps(remaining);
+
+    if (queuedCount > 0) {
+      setDataSource(`Offline (${remaining.length} pending)`);
+      showToast(
+        'warning',
+        `Registered ${newLots.length} Lot(s) (Pending Sync)`,
+        `Saved locally and queued ${queuedCount} lot(s) for database sync.`
+      );
+    } else {
+      showToast(
+        'success',
+        'KML Lots Registered',
+        `Added ${savedCount} planter lot(s) directly from KML.`
+      );
+    }
   };
 
   const handleUpdateLotDetails = async (lotId, updatedFields) => {
@@ -769,68 +841,31 @@ export default function App() {
     );
   };
 
-  const handleExportCsv = () => {
-    const escapeCsvField = (value) => {
-      if (value === null || value === undefined) return '';
-      const str = String(value);
-      if (/[",\r\n]/.test(str)) {
-        return '"' + str.replace(/"/g, '""') + '"';
-      }
-      return str;
-    };
+  const handleExportCsv = (requestedFormat) => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const baseName = `CaneReadyPH_Harvest_Schedule_${todayStr}`;
 
-    const headers = [
-      'Lot ID',
-      'Planter Name',
-      'Contact Number',
-      "Planter's Association",
-      'Hacienda',
-      'Barangay (Brgy.)',
-      'City',
-      'Field Hectarage (Ha)',
-      'Planned Date of Harvest',
-      'Schedule Status',
-      'Latitude',
-      'Longitude',
-      'Planter Notes',
-    ];
+    if (requestedFormat === 'csv') {
+      exportReportCsv(filteredLots, baseName);
+      setIsExportModalOpen(false);
+      showToast('success', 'CSV Exported', `Downloaded ${baseName}.csv (${filteredLots.length} lots).`);
+      return;
+    }
+    if (requestedFormat === 'xlsx') {
+      exportReportXlsx(filteredLots, baseName);
+      setIsExportModalOpen(false);
+      showToast('success', 'Excel (.xlsx) Exported', `Downloaded ${baseName}.xlsx (${filteredLots.length} lots).`);
+      return;
+    }
+    if (requestedFormat === 'pdf') {
+      exportReportPdf(filteredLots, baseName);
+      setIsExportModalOpen(false);
+      showToast('success', 'PDF Report Exported', `Downloaded ${baseName}.pdf (${filteredLots.length} lots).`);
+      return;
+    }
 
-    const rows = filteredLots.map((l) => [
-      l.id,
-      l.planter,
-      l.contactNumber,
-      l.association,
-      l.hacienda,
-      l.barangay,
-      l.city,
-      l.areaHa,
-      l.plannedHarvestDate || 'Not set',
-      l.status,
-      l.latitude,
-      l.longitude,
-      l.harvestNotes || '',
-    ]);
-
-    const nl = String.fromCharCode(13, 10);
-    const csvLines = [
-      headers.map(escapeCsvField).join(','),
-      ...rows.map((row) => row.map(escapeCsvField).join(',')),
-    ].join(nl);
-
-    const bom = String.fromCharCode(0xfeff);
-    const blob = new Blob([bom + csvLines], {
-      type: 'text/csv;charset=utf-8;',
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'planter_harvest_schedule_report.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    setIsExportModalOpen(true);
   };
-
   return (
     <div
       className={
@@ -851,7 +886,7 @@ export default function App() {
         onRefresh={syncLots}
         onExportCsv={handleExportCsv}
         darkMode={darkMode}
-        onToggleDarkMode={() => setDarkMode((prev) => !prev)}
+        onToggleDarkMode={toggleDarkMode}
         viewMode={viewMode}
         onViewModeChange={handleViewModeChange}
         lots={evaluatedLots}
@@ -1167,6 +1202,8 @@ export default function App() {
             onSelectLot={handleSelectLotOrMerge}
             onUpdateLotBoundary={handleUpdateLotBoundary}
             onCreateLotFromPolygon={handleCreateLotFromPolygon}
+            onQuickAddLot={handleAddLot}
+            onBatchAddLots={handleBatchAddLots}
           />
         </main>
       )}
@@ -1284,6 +1321,119 @@ export default function App() {
         initialLatitude={pendingPolygonLat}
         initialLongitude={pendingPolygonLng}
       />
-    </div>
+
+      {isExportModalOpen && (
+        <div
+          onClick={() => setIsExportModalOpen(false)}
+          className="fixed inset-0 z-[1500] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden select-none"
+          >
+            <div className="h-1.5 w-full bg-emerald-600" />
+            <div className="p-5 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                    Select Export Format
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Exporting <strong>{filteredLots.length}</strong> planter lots (
+                    <strong>
+                      {filteredLots
+                        .reduce((s, l) => s + (Number(l.areaHa) || 0), 0)
+                        .toFixed(2)}{' '}
+                      ha
+                    </strong>
+                    ) • Organized without Lot ID
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsExportModalOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-2.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleExportCsv('xlsx')}
+                  className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-emerald-500 dark:hover:border-emerald-500 bg-slate-50/70 dark:bg-slate-800/60 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/30 flex items-center justify-between gap-3 text-left transition-all cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-10 h-10 rounded-xl bg-emerald-600 text-white font-mono font-black text-xs flex items-center justify-center shrink-0 shadow-xs">
+                      XLSX
+                    </span>
+                    <div>
+                      <div className="font-extrabold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
+                        Excel Workbook (.xlsx)
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Auto-sized columns, styled header &amp; total summary row
+                      </div>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold text-[11px] shrink-0">
+                    Download
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExportCsv('pdf')}
+                  className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-rose-500 dark:hover:border-rose-500 bg-slate-50/70 dark:bg-slate-800/60 hover:bg-rose-50/40 dark:hover:bg-rose-950/30 flex items-center justify-between gap-3 text-left transition-all cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-10 h-10 rounded-xl bg-rose-600 text-white font-mono font-black text-xs flex items-center justify-center shrink-0 shadow-xs">
+                      PDF
+                    </span>
+                    <div>
+                      <div className="font-extrabold text-slate-900 dark:text-white group-hover:text-rose-600 dark:group-hover:text-rose-400">
+                        PDF Report (.pdf)
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Landscape A4 official report table ready for printing
+                      </div>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-[11px] shrink-0">
+                    Download
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExportCsv('csv')}
+                  className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-sky-500 dark:hover:border-sky-500 bg-slate-50/70 dark:bg-slate-800/60 hover:bg-sky-50/40 dark:hover:bg-sky-950/30 flex items-center justify-between gap-3 text-left transition-all cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-10 h-10 rounded-xl bg-sky-600 text-white font-mono font-black text-xs flex items-center justify-center shrink-0 shadow-xs">
+                      CSV
+                    </span>
+                    <div>
+                      <div className="font-extrabold text-slate-900 dark:text-white group-hover:text-sky-600 dark:group-hover:text-sky-400">
+                        CSV Spreadsheet (.csv)
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Universal comma-separated text file for Excel &amp; GIS
+                      </div>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-lg bg-sky-600 text-white font-bold text-[11px] shrink-0">
+                    Download
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}    </div>
   );
 }
+
+
+

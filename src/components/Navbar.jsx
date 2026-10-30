@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Sprout,
   Plus,
@@ -387,16 +387,16 @@ export default function Navbar({
             type="button"
             onClick={onToggleDarkMode}
             title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-all"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-all active:scale-95"
           >
             {darkMode ? (
               <>
-                <Sun className="w-3.5 h-3.5 text-amber-400" />
+                <Sun className="w-3.5 h-3.5 text-amber-400" style={{ animation: 'themeIconIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both' }} />
                 <span className="hidden md:inline">Light</span>
               </>
             ) : (
               <>
-                <Moon className="w-3.5 h-3.5 text-slate-600" />
+                <Moon className="w-3.5 h-3.5 text-slate-600" style={{ animation: 'themeIconIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both' }} />
                 <span className="hidden md:inline">Dark</span>
               </>
             )}
@@ -408,11 +408,12 @@ export default function Navbar({
             className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-colors"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Export CSV</span>
+            <span>Export</span>
           </button>
         </div>
       </div>
     </header>
   );
 }
+
 

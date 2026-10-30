@@ -1,4 +1,4 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -12,31 +12,50 @@
 @layer base {
   html {
     scroll-behavior: smooth;
-    --sb-opacity: 0;
-    transition: --sb-opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   body {
     font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    transition: background-color 0.2s ease, color 0.2s ease, --sb-opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1);
     overflow-x: hidden;
   }
 }
 
 /* =========================================================
-   SMOOTH FADE AUTO-HIDING SCROLLBAR (Light & Dark Mode)
+   SCROLLBAR CUSTOM PROPERTY INITIALIZER
    ========================================================= */
 * {
   --sb-opacity: 0;
-  transition: --sb-opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1);
 }
+
+/* =========================================================
+   VIEW TRANSITIONS — DARK / LIGHT THEME SWITCH
+   The JS calls document.startViewTransition() which captures
+   a screenshot, swaps the DOM, then cross-fades the two on
+   the GPU compositor — zero per-element transitions needed.
+   ========================================================= */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.35s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* The new snapshot sits on top and fades in */
+::view-transition-new(root) {
+  animation-name: none;       /* no extra animation — just opacity */
+}
+::view-transition-old(root) {
+  animation-name: none;
+}
+
+/* =========================================================
+   SMOOTH FADE AUTO-HIDING SCROLLBAR (Light & Dark Mode)
+   ========================================================= */
 
 /* Smoothly fade in when scrolling or near the scrollbar edge */
 html.is-scrolling,
 html.is-scrolling body,
 .is-scrolling {
   --sb-opacity: 0.62;
-  transition: --sb-opacity 0.18s ease-out;
 }
 
 *::-webkit-scrollbar {
@@ -280,3 +299,14 @@ html.dark .border-rose-200 {
   animation: mapPopupSpring 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Theme toggle icon entrance animation */
+@keyframes themeIconIn {
+  0% {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.5);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(0deg) scale(1);
+  }
+}

@@ -571,7 +571,7 @@ export default function LotInspectorDrawer({
                         Planned Date of Harvest
                       </span>
                       <p className="text-xl font-black text-slate-900 dark:text-white mt-1">
-                        {renderedLot.plannedHarvestDate || 'Not set yet'}
+                        {renderedLot.formattedHarvestDate || renderedLot.plannedHarvestDate || 'Not Scheduled'}
                       </p>
                       <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
                         {renderedLot.harvestTimelineLabel}
@@ -778,5 +778,6 @@ export default function LotInspectorDrawer({
     </div>
   );
 }
+
 
 

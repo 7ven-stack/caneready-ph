@@ -20,6 +20,26 @@ export function sanitizeContactNumber(raw) {
   return cleaned;
 }
 
+export function formatHarvestDateReadable(rawDate) {
+  if (!rawDate) return null;
+  const str = String(rawDate).trim();
+  if (!str) return null;
+
+  const parts = str.split('-').map(Number);
+  const dateObj =
+    parts.length === 3 && parts.every(Number.isFinite)
+      ? new Date(parts[0], parts[1] - 1, parts[2])
+      : new Date(str);
+
+  if (Number.isNaN(dateObj.getTime())) return str;
+
+  return dateObj.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 export function pointInRing(point, ring = []) {
   if (!point || !Array.isArray(ring) || ring.length < 3) return false;
   const py = Array.isArray(point)
@@ -227,9 +247,10 @@ export function evaluateLotMetrics(lot, referenceDate = new Date()) {
     : null;
 
   let daysUntilHarvest = null;
-  let harvestTimelineLabel = 'No harvest date set';
+  let formattedHarvestDate = null;
+  let harvestTimelineLabel = 'No date scheduled yet';
   let status = 'No Date Set';
-  let statusBadgeLabel = 'No Date Set';
+  let statusBadgeLabel = 'Unscheduled';
   let statusPriority = 4;
 
   if (rawDate) {
@@ -245,44 +266,58 @@ export function evaluateLotMetrics(lot, referenceDate = new Date()) {
         : new Date(rawDate);
 
     if (!Number.isNaN(targetMidnight.getTime())) {
+      formattedHarvestDate = targetMidnight.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+      const weekday = targetMidnight.toLocaleDateString('en-US', {
+        weekday: 'short',
+      });
+
       const diffMs = targetMidnight.getTime() - todayMidnight.getTime();
       daysUntilHarvest = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
       if (daysUntilHarvest < 0) {
         const overdueDays = Math.abs(daysUntilHarvest);
         harvestTimelineLabel =
-          overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`;
+          overdueDays === 1
+            ? `${weekday} • 1 day overdue`
+            : `${weekday} • ${overdueDays} days overdue`;
         status = 'Harvest Due';
         statusBadgeLabel = 'Harvest Due';
         statusPriority = 1;
       } else if (daysUntilHarvest === 0) {
-        harvestTimelineLabel = 'Harvesting Today';
+        harvestTimelineLabel = `Today (${weekday}) • Ready to cut`;
         status = 'Harvest Due';
-        statusBadgeLabel = 'Harvest Due';
+        statusBadgeLabel = 'Harvest Today';
         statusPriority = 1;
       } else if (daysUntilHarvest === 1) {
-        harvestTimelineLabel = 'In 1 day';
+        harvestTimelineLabel = `Tomorrow (${weekday}) • 1 day left`;
         status = 'Harvest Due';
         statusBadgeLabel = 'Harvest Due';
         statusPriority = 1;
       } else if (daysUntilHarvest <= 7) {
-        harvestTimelineLabel = `In ${daysUntilHarvest} days`;
+        harvestTimelineLabel = `This week (${weekday}) • ${daysUntilHarvest} days left`;
         status = 'Harvest Due';
         statusBadgeLabel = 'Harvest Due';
         statusPriority = 1;
       } else if (daysUntilHarvest <= 30) {
-        harvestTimelineLabel = `In ${daysUntilHarvest} days`;
+        harvestTimelineLabel = `${weekday} • ${daysUntilHarvest} days left`;
         status = 'Upcoming';
         statusBadgeLabel = 'Upcoming (30d)';
         statusPriority = 2;
       } else {
-        harvestTimelineLabel = `In ${daysUntilHarvest} days`;
+        harvestTimelineLabel = `${weekday} • ${daysUntilHarvest} days left`;
         status = 'Planned Later';
-        statusBadgeLabel = 'Planned Later';
+        statusBadgeLabel = 'Scheduled';
         statusPriority = 3;
       }
     }
   }
+
+  const latNum = Number(lot?.latitude ?? centroid.latitude);
+  const lngNum = Number(lot?.longitude ?? centroid.longitude);
 
   return {
     ...lot,
@@ -290,9 +325,11 @@ export function evaluateLotMetrics(lot, referenceDate = new Date()) {
     areaHa,
     expectedTcHa,
     estimatedTons,
-    latitude: Number(lot?.latitude ?? centroid.latitude),
-    longitude: Number(lot?.longitude ?? centroid.longitude),
+    latitude: latNum,
+    longitude: lngNum,
+    coordText: lot?.coordText || `${latNum.toFixed(5)}, ${lngNum.toFixed(5)}`,
     plannedHarvestDate: rawDate || null,
+    formattedHarvestDate,
     daysUntilHarvest,
     harvestTimelineLabel,
     status,
@@ -307,6 +344,8 @@ export function getStatusStyles(status) {
   if (canonical === 'Harvest Due') {
     return {
       bar: 'bg-emerald-500',
+      text: 'text-emerald-700 dark:text-emerald-400',
+      icon: 'text-emerald-600 dark:text-emerald-400',
       badge:
         'bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/80',
       dot: 'bg-emerald-500',
@@ -320,6 +359,8 @@ export function getStatusStyles(status) {
   if (canonical === 'Upcoming') {
     return {
       bar: 'bg-amber-500',
+      text: 'text-amber-700 dark:text-amber-400',
+      icon: 'text-amber-600 dark:text-amber-400',
       badge:
         'bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800/80',
       dot: 'bg-amber-500',
@@ -333,6 +374,8 @@ export function getStatusStyles(status) {
   if (canonical === 'Planned Later') {
     return {
       bar: 'bg-sky-500',
+      text: 'text-sky-700 dark:text-sky-400',
+      icon: 'text-sky-600 dark:text-sky-400',
       badge:
         'bg-sky-50 dark:bg-sky-950/70 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800/80',
       dot: 'bg-sky-500',
@@ -345,6 +388,8 @@ export function getStatusStyles(status) {
 
   return {
     bar: 'bg-slate-400 dark:bg-slate-600',
+    text: 'text-slate-500 dark:text-slate-400',
+    icon: 'text-slate-400 dark:text-slate-500',
     badge:
       'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700',
     dot: 'bg-slate-400 dark:bg-slate-500',
@@ -393,7 +438,7 @@ export function exportLotsToCsv(
     Math.round(Number(lot.estimatedTons || 0)),
     Number(lot.latitude || 0).toFixed(6),
     Number(lot.longitude || 0).toFixed(6),
-    lot.plannedHarvestDate || 'Unscheduled',
+    lot.formattedHarvestDate || lot.plannedHarvestDate || 'Unscheduled',
     lot.statusBadgeLabel || lot.status || 'No Date Set',
   ]);
 
