@@ -1147,7 +1147,7 @@ export default function ParcelMapView({
 
   const [activePopupLotId, setActivePopupLotId] = useState(null);
   const [popupPos, setPopupPos] = useState({ x: 320, y: 24 });
-  const [basemapKey, setBasemapKey] = useState('googleHybrid');
+  const [basemapKey, setBasemapKey] = useState('googleSat');
 
   const [mapMode, setMapMode] = useState('view');
   const [editingLotId, setEditingLotId] = useState(null);
@@ -1181,13 +1181,15 @@ export default function ParcelMapView({
   const isMergeModeRef = useRef(isMergeMode);
   const onSelectLotRef = useRef(onSelectLot);
   const activePopupLotIdRef = useRef(activePopupLotId);
+  const leftInsetRef = useRef(isSidePanelOpen ? panelWidth : 0);
   const activeKmlFeatureRef = useRef(activeKmlFeature);
   useEffect(() => {
     isMergeModeRef.current = isMergeMode;
     onSelectLotRef.current = onSelectLot;
     activePopupLotIdRef.current = activePopupLotId;
+    leftInsetRef.current = isSidePanelOpen ? panelWidth : 0;
     activeKmlFeatureRef.current = activeKmlFeature;
-  }, [isMergeMode, onSelectLot, activePopupLotId, activeKmlFeature]);
+  }, [isMergeMode, onSelectLot, activePopupLotId, activeKmlFeature, isSidePanelOpen, panelWidth]);
 
   // Convert inner containerPoint to outer viewport (screen) pixel coordinates (pure 2D rotation)
   const containerPtToViewportPt = useCallback((pt) => {
@@ -1219,6 +1221,95 @@ export default function ParcelMapView({
       y: vh / 2 + (dx * sin + dy * cos),
     };
   }, []);
+
+  // Fit any set of [lat, lng] points into the ACTUAL visible screen area
+  // (accounts for oversized diagonal rotation canvas, open left side panel, and map rotation angle)
+  const flyToVisiblePoints = useCallback(
+    (points = [], options = {}) => {
+      const map = mapInstanceRef.current;
+      const vp = mapViewportRef.current;
+      if (!map || !vp || !Array.isArray(points) || points.length === 0) return;
+
+      const validPts = points.filter(
+        (pt) =>
+          Array.isArray(pt) &&
+          pt.length >= 2 &&
+          Number.isFinite(Number(pt[0])) &&
+          Number.isFinite(Number(pt[1]))
+      );
+      if (validPts.length === 0) return;
+
+      const {
+        padding = 56,
+        maxZoom = 18,
+        duration = 0.55,
+      } = options;
+
+      const vw = vp.clientWidth || 1200;
+      const vh = vp.clientHeight || 800;
+      const leftInset = leftInsetRef.current || 0;
+
+      const availW = Math.max(180, vw - leftInset - padding * 2);
+      const availH = Math.max(180, vh - padding * 2);
+
+      const REF_Z = 18;
+      const deg = bearingRef.current || 0;
+      const rad = (deg * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+
+      let minRx = Infinity;
+      let maxRx = -Infinity;
+      let minRy = Infinity;
+      let maxRy = -Infinity;
+
+      for (let i = 0; i < validPts.length; i++) {
+        const p = map.project([Number(validPts[i][0]), Number(validPts[i][1])], REF_Z);
+        const rx = p.x * cos - p.y * sin;
+        const ry = p.x * sin + p.y * cos;
+        if (rx < minRx) minRx = rx;
+        if (rx > maxRx) maxRx = rx;
+        if (ry < minRy) minRy = ry;
+        if (ry > maxRy) maxRy = ry;
+      }
+
+      const spanW = Math.max(1, maxRx - minRx);
+      const spanH = Math.max(1, maxRy - minRy);
+      const scale = Math.min(availW / spanW, availH / spanH);
+
+      const minZ = map.getMinZoom() || 10;
+      const idealZoom = REF_Z + Math.log2(scale);
+      const targetZoom = Math.max(
+        minZ,
+        Math.min(maxZoom, Math.floor(idealZoom))
+      );
+
+      // Un-rotate the screen-aligned bounding box midpoint back to world coordinates
+      const midRx = (minRx + maxRx) / 2;
+      const midRy = (minRy + maxRy) / 2;
+      const cxRef = midRx * cos + midRy * sin;
+      const cyRef = -midRx * sin + midRy * cos;
+      const polyCenterLatLng = map.unproject(L.point(cxRef, cyRef), REF_Z);
+
+      // Shift camera left by half of the open side panel so polygons center in the unobstructed area
+      const screenDx = -Math.round(leftInset / 2);
+      const mapDx = screenDx * cos;
+      const mapDy = -screenDx * sin;
+
+      const centerPtAtTarget = map.project(polyCenterLatLng, targetZoom);
+      const shiftedPt = L.point(
+        centerPtAtTarget.x + mapDx,
+        centerPtAtTarget.y + mapDy
+      );
+      const targetCenterLatLng = map.unproject(shiftedPt, targetZoom);
+
+      map.flyTo(targetCenterLatLng, targetZoom, {
+        animate: true,
+        duration,
+      });
+    },
+    []
+  );
 
   // Batched Read-Then-Write screen label position sync using Leaflet's native invisible anchors
   // Guarantees 0 spin, 100% crisp unrotated pill backgrounds, and smooth tracking during zoom/pan/rotate
@@ -1980,8 +2071,9 @@ export default function ParcelMapView({
       const cardWidth = popupCardRef.current?.offsetWidth || 352;
       const cardHeight = popupCardRef.current?.offsetHeight || 275;
 
+      const minLeft = (leftInsetRef.current || 0) + 14;
       const clampedLeft = Math.max(
-        14,
+        minLeft,
         Math.min(
           containerWidth - cardWidth - 14,
           Math.round(screenCenterPt.x - cardWidth / 2)
@@ -2079,8 +2171,10 @@ export default function ParcelMapView({
       const targetZoom = Math.max(map.getZoom(), 17);
       const targetPoint = map.project(center, targetZoom);
       const rad = (-(bearingRef.current || 0) * Math.PI) / 180;
-      const offsetX = -Math.sin(rad) * -85;
-      const offsetY = Math.cos(rad) * -85;
+      const screenDx = -Math.round((leftInsetRef.current || 0) / 2);
+      const screenDy = -85;
+      const offsetX = screenDx * Math.cos(rad) - screenDy * Math.sin(rad);
+      const offsetY = screenDx * Math.sin(rad) + screenDy * Math.cos(rad);
       const offsetPoint = L.point(targetPoint.x + offsetX, targetPoint.y + offsetY);
       const offsetLatLng = map.unproject(offsetPoint, targetZoom);
 
@@ -2150,8 +2244,8 @@ export default function ParcelMapView({
       lastClickedKmlIdRef.current = feat.id;
 
       if (Array.isArray(feat.coordinates) && feat.coordinates.length >= 3) {
-        map.flyToBounds(L.latLngBounds(feat.coordinates), {
-          padding: [160, 160],
+        flyToVisiblePoints(feat.coordinates, {
+          padding: 70,
           maxZoom: 18,
           duration: 0.45,
         });
@@ -2203,22 +2297,25 @@ export default function ParcelMapView({
   );
 
   const handleFitMultiSelection = useCallback(() => {
-    const map = mapInstanceRef.current;
-    if (!map || !multiSelectionSummary) return;
+    if (!multiSelectionSummary) return;
 
-    const bounds = L.latLngBounds([]);
+    const pts = [];
     multiSelectionSummary.selectedLots.forEach((lot, idx) => {
       const rings = getLotRings(lot, idx);
-      if (rings.length > 0) bounds.extend(getRingsBounds(rings));
+      rings.forEach((ring) => {
+        if (Array.isArray(ring)) pts.push(...ring);
+      });
     });
-    const kmlBounds = getFeaturesBounds(multiSelectionSummary.selectedKmls);
-    if (kmlBounds) bounds.extend(kmlBounds);
+    multiSelectionSummary.selectedKmls.forEach((feat) => {
+      if (Array.isArray(feat.coordinates)) {
+        pts.push(...feat.coordinates);
+      }
+    });
 
-    if (bounds.isValid()) {
-      map.flyToBounds(bounds, { padding: [160, 160], maxZoom: 18, duration: 0.45 });
+    if (pts.length > 0) {
+      flyToVisiblePoints(pts, { padding: 64, maxZoom: 18, duration: 0.45 });
     }
-  }, [multiSelectionSummary]);
-
+  }, [multiSelectionSummary, flyToVisiblePoints]);
   const handleClearKml = useCallback(() => {
     setImportedFeatures([]);
     setActiveKmlFeature(null);
@@ -2476,8 +2573,10 @@ export default function ParcelMapView({
 
     syncDiagonalCanvasSize();
 
+    let resizeTimer = 0;
     const resizeObserver = new ResizeObserver(() => {
-      syncDiagonalCanvasSize();
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(syncDiagonalCanvasSize, 90);
     });
     resizeObserver.observe(mapViewportRef.current);
 
@@ -2667,22 +2766,7 @@ export default function ParcelMapView({
     return () => clearTimeout(timer);
   }, [isActive, scheduleLabelRefresh, syncScreenLabelsPosition]);
 
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-    const timer = setTimeout(() => {
-      map.invalidateSize({ pan: false });
-      syncScreenLabelsPosition();
-      if (activePopupLot) updatePopupPixelPosition(activePopupLot);
-    }, 220);
-    return () => clearTimeout(timer);
-  }, [
-    isSidePanelOpen,
-    panelWidth,
-    activePopupLot,
-    updatePopupPixelPosition,
-    syncScreenLabelsPosition,
-  ]);
+
 
   useEffect(() => {
     if (activePopupLot && mapMode === 'view') {
@@ -2721,7 +2805,7 @@ export default function ParcelMapView({
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    const config = BASEMAPS[basemapKey] || BASEMAPS.googleHybrid;
+    const config = BASEMAPS[basemapKey] || BASEMAPS.googleSat;
 
     if (tileLayerRef.current) {
       map.removeLayer(tileLayerRef.current);
@@ -3369,24 +3453,37 @@ export default function ParcelMapView({
   };
 
   const handleFitAllBounds = () => {
-    const map = mapInstanceRef.current;
-    const group = polygonsGroupRef.current;
-    const kmlGroup = kmlGroupRef.current;
-    if (!map) return;
-
     setActivePopupLotId(null);
     setActiveKmlFeature(null);
     clearMultiSelection();
 
-    const bounds = L.latLngBounds([]);
-    if (group && group.getLayers().length > 0) bounds.extend(group.getBounds());
-    if (kmlGroup && kmlGroup.getLayers().length > 0) bounds.extend(kmlGroup.getBounds());
+    const collectPoints = (ignoreHidden = false) => {
+      const pts = [];
+      lots.forEach((lot, idx) => {
+        if (!ignoreHidden && hiddenLotSetRef.current.has(lot.id)) return;
+        const rings = getLotRings(lot, idx);
+        rings.forEach((ring) => {
+          if (Array.isArray(ring)) pts.push(...ring);
+        });
+      });
+      importedFeatures.forEach((feat) => {
+        if (!ignoreHidden && hiddenKmlSetRef.current.has(feat.id)) return;
+        if (Array.isArray(feat.coordinates)) {
+          pts.push(...feat.coordinates);
+        }
+      });
+      return pts;
+    };
 
-    if (bounds.isValid()) {
-      map.flyToBounds(bounds, { padding: [150, 150], duration: 0.55 });
+    let allPts = collectPoints(false);
+    if (allPts.length === 0) {
+      allPts = collectPoints(true);
+    }
+
+    if (allPts.length > 0) {
+      flyToVisiblePoints(allPts, { padding: 52, maxZoom: 18, duration: 0.55 });
     }
   };
-
   const activePopupIsMerged = isMultiRingLot(activePopupLot);
 
   return (
@@ -3404,13 +3501,14 @@ export default function ParcelMapView({
       }</style>
 
       {/* SINGLE COMPACT GIS TOP BAR */}
-      <div className="px-3 py-2 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2.5 text-xs shrink-0">
+      <div className="px-3 py-1.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
+        {/* Left: Integrated Coordinate / Planter Search Bar */}
         <form
           onSubmit={handleCoordinateSearch}
-          className="w-full sm:w-[390px] lg:w-[430px] shrink-0 flex items-center gap-1.5"
+          className="w-full sm:w-[360px] lg:w-[410px] shrink-0"
         >
-          <div className="relative flex-1 min-w-[220px]">
-            <Compass className="w-4 h-4 text-rose-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <div className="relative flex items-center h-8 rounded-lg border border-slate-200 dark:border-slate-700/90 bg-slate-100/80 dark:bg-slate-800/80 focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500/40 transition-all">
+            <Compass className="w-3.5 h-3.5 text-slate-400 dark:text-slate-400 ml-2.5 shrink-0 pointer-events-none" />
             <input
               type="text"
               value={coordQuery}
@@ -3418,8 +3516,8 @@ export default function ParcelMapView({
                 setCoordQuery(e.target.value);
                 if (coordError) setCoordError('');
               }}
-              placeholder="Search Lat, Long (e.g. 10.82082, 123.01053) or Planter..."
-              className="w-full pl-9 pr-8 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-emerald-600"
+              placeholder="Search Lat, Long (10.8208, 123.0105) or Planter..."
+              className="w-full h-full pl-2 pr-2 text-xs bg-transparent text-slate-900 dark:text-white font-mono placeholder:font-sans placeholder:text-slate-400 focus:outline-none"
             />
             {coordQuery && (
               <button
@@ -3429,44 +3527,48 @@ export default function ParcelMapView({
                   setCoordError('');
                   setSearchedPin(null);
                 }}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                title="Clear search"
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer shrink-0"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
+            <button
+              type="submit"
+              className="h-6 px-2.5 mr-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
+            >
+              Go
+            </button>
           </div>
-          <button
-            type="submit"
-            className="px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shrink-0 shadow-2xs cursor-pointer"
-          >
-            Go
-          </button>
         </form>
 
+        {/* Center: Active Digitizer Controls (Only shown when Drawing or Reshaping) */}
         {mapMode !== 'view' && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="px-2 py-1 rounded bg-emerald-700 text-white font-bold text-[11px]">
+          <div className="flex flex-wrap items-center h-8 px-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 gap-1">
+            <span className="px-2 py-0.5 rounded-md bg-emerald-600 text-white font-bold text-[11px]">
               {mapMode === 'edit'
                 ? 'Reshaping ' + (editingLot ? editingLot.id : 'Polygon')
-                : 'Drawing Polygon'}
+                : 'Drawing'}
             </span>
-            <span className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono font-bold">
+            <span className="px-1.5 font-mono font-bold text-[11px] text-slate-700 dark:text-slate-200">
               {draftCoords.length} pts • {draftAreaHa} ha
             </span>
-            <label className="inline-flex items-center gap-1 text-[11px] font-medium mx-1 cursor-pointer">
+            <label className="inline-flex items-center gap-1 text-[11px] font-medium px-1 cursor-pointer text-slate-600 dark:text-slate-300">
               <input
                 type="checkbox"
                 checked={autoUpdateArea}
                 onChange={(e) => setAutoUpdateArea(e.target.checked)}
                 className="rounded border-slate-300 text-emerald-600"
               />
-              <span>Sync {draftAreaHa} ha</span>
+              <span>Sync Area</span>
             </label>
+            <div className="w-px h-4 bg-slate-300 dark:bg-slate-700 mx-0.5" />
             <button
               type="button"
               onClick={() => setDraftCoords((prev) => prev.slice(0, -1))}
               disabled={draftCoords.length === 0}
-              className="px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 font-semibold disabled:opacity-40 cursor-pointer"
+              title="Undo last vertex"
+              className="h-6 px-2 rounded-md hover:bg-white dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-[11px] disabled:opacity-40 cursor-pointer"
             >
               <RotateCcw className="w-3 h-3 inline mr-1" />
               Undo
@@ -3474,9 +3576,9 @@ export default function ParcelMapView({
             <button
               type="button"
               onClick={() => setDraftCoords([])}
-              className="px-2 py-1 rounded border border-rose-200 bg-rose-50 text-rose-700 font-semibold cursor-pointer"
+              title="Clear all vertices"
+              className="h-6 px-2 rounded-md hover:bg-rose-500/15 text-rose-600 dark:text-rose-400 font-semibold text-[11px] cursor-pointer"
             >
-              <Trash2 className="w-3 h-3 inline mr-1" />
               Clear
             </button>
             {mapMode === 'edit' && editingLot && (
@@ -3484,9 +3586,8 @@ export default function ParcelMapView({
                 type="button"
                 disabled={draftCoords.length < 3}
                 onClick={handleSaveEditedBoundary}
-                className="px-2.5 py-1 rounded bg-emerald-700 text-white font-bold disabled:opacity-40 cursor-pointer"
+                className="h-6 px-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] disabled:opacity-40 cursor-pointer"
               >
-                <Check className="w-3 h-3 inline mr-1" />
                 Save {editingLot.id}
               </button>
             )}
@@ -3495,7 +3596,7 @@ export default function ParcelMapView({
                 type="button"
                 disabled={draftCoords.length < 3}
                 onClick={handleCreateNewLotFromDrawn}
-                className="px-2.5 py-1 rounded bg-slate-900 text-white font-bold disabled:opacity-40 cursor-pointer"
+                className="h-6 px-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] disabled:opacity-40 cursor-pointer"
               >
                 Register ({draftAreaHa} ha)
               </button>
@@ -3503,17 +3604,18 @@ export default function ParcelMapView({
             <button
               type="button"
               onClick={handleCancelDigitize}
-              className="px-2 py-1 rounded border border-slate-300 bg-white text-slate-600 font-semibold cursor-pointer"
+              className="h-6 px-2 rounded-md hover:bg-white dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 font-semibold text-[11px] cursor-pointer"
             >
               Cancel
             </button>
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+        {/* Right: Unified Basemap Switcher + Segmented GIS Tools Dock */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0 ml-auto">
           {searchedPin && (
-            <div className="flex items-center gap-1.5 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 px-2 py-1 rounded-lg text-[11px]">
-              <MapPin className="w-3 h-3 text-rose-600 shrink-0" />
+            <div className="flex items-center h-8 gap-1.5 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 px-2.5 rounded-lg text-[11px]">
+              <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
               <span className="font-mono font-bold text-rose-900 dark:text-rose-200">
                 {searchedPin.lat}°N, {searchedPin.lng}°E
               </span>
@@ -3522,29 +3624,30 @@ export default function ParcelMapView({
                 onClick={() =>
                   onCreateLotFromPolygon(null, null, searchedPin.lat, searchedPin.lng)
                 }
-                className="px-1.5 py-0.5 rounded bg-emerald-700 text-white font-bold cursor-pointer"
+                className="px-1.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold cursor-pointer"
               >
                 + Lot
               </button>
               <button
                 type="button"
                 onClick={() => setSearchedPin(null)}
-                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                className="text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
               >
-                <X className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
           )}
 
-          <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 bg-slate-100 dark:bg-slate-800 text-[11px]">
+          {/* Segmented Basemap Switcher */}
+          <div className="inline-flex items-center h-8 rounded-lg border border-slate-200 dark:border-slate-700/90 p-0.5 bg-slate-100/90 dark:bg-slate-800/90 text-[11px]">
             <button
               type="button"
               onClick={() => setBasemapKey('googleHybrid')}
               className={
-                'px-2 py-1 rounded font-semibold transition-all cursor-pointer ' +
+                'h-full px-2.5 rounded-md font-semibold transition-all cursor-pointer ' +
                 (basemapKey === 'googleHybrid'
-                  ? 'bg-white dark:bg-slate-900 text-emerald-800 dark:text-emerald-400 shadow-2xs'
-                  : 'text-slate-600 dark:text-slate-400')
+                  ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200')
               }
             >
               Google Earth
@@ -3553,10 +3656,10 @@ export default function ParcelMapView({
               type="button"
               onClick={() => setBasemapKey('esriWorld')}
               className={
-                'px-2 py-1 rounded font-semibold transition-all cursor-pointer ' +
+                'h-full px-2.5 rounded-md font-semibold transition-all cursor-pointer ' +
                 (basemapKey === 'esriWorld'
-                  ? 'bg-white dark:bg-slate-900 text-emerald-800 dark:text-emerald-400 shadow-2xs'
-                  : 'text-slate-600 dark:text-slate-400')
+                  ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200')
               }
             >
               Esri
@@ -3565,53 +3668,52 @@ export default function ParcelMapView({
               type="button"
               onClick={() => setBasemapKey('googleSat')}
               className={
-                'px-2 py-1 rounded font-semibold transition-all cursor-pointer ' +
+                'h-full px-2.5 rounded-md font-semibold transition-all cursor-pointer ' +
                 (basemapKey === 'googleSat'
-                  ? 'bg-white dark:bg-slate-900 text-emerald-800 dark:text-emerald-400 shadow-2xs'
-                  : 'text-slate-600 dark:text-slate-400')
+                  ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200')
               }
             >
               Clean Sat
             </button>
           </div>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".kml,.geojson,.json,.xml"
-            onChange={handleKmlOrGeoJsonUpload}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={Boolean(importStatus)}
-            title="Import KML / GeoJSON"
-            aria-label="Import KML / GeoJSON"
-            className="w-8 h-8 rounded-lg border border-emerald-600/80 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/70 flex items-center justify-center text-emerald-800 dark:text-emerald-300 transition-all disabled:opacity-50 disabled:cursor-wait cursor-pointer"
-          >
-            <Upload className="w-4 h-4" />
-          </button>
+          {/* Unified GIS Action Dock (Import, Merge, Fit All, Draw) */}
+          <div className="inline-flex items-center h-8 rounded-lg border border-slate-200 dark:border-slate-700/90 p-0.5 bg-slate-100/90 dark:bg-slate-800/90 gap-0.5">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".kml,.geojson,.json,.xml"
+              onChange={handleKmlOrGeoJsonUpload}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={Boolean(importStatus)}
+              title="Import KML / GeoJSON file"
+              aria-label="Import KML / GeoJSON"
+              className="h-7 w-7 rounded-md hover:bg-white dark:hover:bg-slate-700/80 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-wait cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+            </button>
 
-          <button
-            type="button"
-            onClick={handleMergeButtonClick}
-            title={
-              isMergeMode
-                ? 'Cancel Merge Mode'
-                : 'Merge Fields (Combine road-sliced polygons)'
-            }
-            aria-label={isMergeMode ? 'Cancel Merge Mode' : 'Merge Fields'}
-            className={
-              'w-8 h-8 rounded-lg border flex items-center justify-center transition-all shadow-2xs cursor-pointer ' +
-              (isMergeMode
-                ? 'bg-violet-600 text-white border-violet-500 ring-2 ring-violet-500/30'
-                : 'bg-white dark:bg-slate-800 hover:bg-violet-50 dark:hover:bg-slate-700 text-violet-700 dark:text-violet-300 border-violet-300 dark:border-violet-700')
-            }
-          >
-            {isMergeMode ? (
-              <X className="w-4 h-4" />
-            ) : (
+            <button
+              type="button"
+              onClick={handleMergeButtonClick}
+              title={
+                isMergeMode
+                  ? 'Exit Merge Mode'
+                  : 'Merge Fields (Combine road-sliced polygons)'
+              }
+              aria-label={isMergeMode ? 'Exit Merge Mode' : 'Merge Fields'}
+              className={
+                'h-7 w-7 rounded-md flex items-center justify-center transition-colors cursor-pointer ' +
+                (isMergeMode
+                  ? 'bg-violet-600 text-white shadow-2xs'
+                  : 'hover:bg-white dark:hover:bg-slate-700/80 text-slate-600 dark:text-slate-300 hover:text-violet-600 dark:hover:text-violet-400')
+              }
+            >
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -3619,34 +3721,42 @@ export default function ParcelMapView({
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                className="w-4 h-4"
+                className="w-3.5 h-3.5"
               >
                 <rect x="3" y="4" width="8" height="16" rx="1.5" />
                 <rect x="13" y="4" width="8" height="16" rx="1.5" />
                 <path d="M8 12h8" />
               </svg>
-            )}
-          </button>
+            </button>
 
-          <button
-            type="button"
-            onClick={handleStartDrawNew}
-            title="Draw New Polygon"
-            aria-label="Draw New Polygon"
-            className="w-8 h-8 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center transition-all shadow-2xs cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
+            <button
+              type="button"
+              onClick={handleFitAllBounds}
+              title="Fit all polygons in view"
+              aria-label="Fit All Polygons"
+              className="h-7 w-7 rounded-md hover:bg-white dark:hover:bg-slate-700/80 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors cursor-pointer"
+            >
+              <Crosshair className="w-3.5 h-3.5" />
+            </button>
 
-          <button
-            type="button"
-            onClick={handleFitAllBounds}
-            title="Fit All Polygons"
-            aria-label="Fit All Polygons"
-            className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
-          >
-            <Crosshair className="w-4 h-4 text-slate-500 dark:text-slate-300" />
-          </button>
+            <div className="w-px h-4 bg-slate-300 dark:bg-slate-700 mx-0.5" />
+
+            <button
+              type="button"
+              onClick={handleStartDrawNew}
+              title="Draw New Polygon"
+              aria-label="Draw New Polygon"
+              className={
+                'h-7 px-2.5 rounded-md font-bold text-[11px] inline-flex items-center justify-center gap-1 transition-colors cursor-pointer ' +
+                (mapMode === 'draw'
+                  ? 'bg-emerald-500 text-white shadow-2xs'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-2xs')
+              }
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Draw</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -3821,7 +3931,7 @@ export default function ParcelMapView({
               e.preventDefault();
             }
           }}
-          className="relative flex-1 h-full bg-[#0f172a] overflow-hidden select-none"
+          className="absolute inset-0 z-0 w-full h-full bg-[#0f172a] overflow-hidden select-none"
         >
           {/* Dynamically Diagonal-Sized Square Map Canvas (Full Coverage at Any Angle) */}
           <div
@@ -3846,7 +3956,7 @@ export default function ParcelMapView({
 
           {/* Live Heading HUD Pill (Appears when rotated) */}
           {mapBearing !== 0 && (
-            <div className="absolute top-3 left-3 z-[450] px-2.5 py-1 rounded-full bg-slate-900 text-white border border-slate-700 text-[11px] font-mono font-bold flex items-center gap-2 shadow-lg">
+            <div style={{ left: (isSidePanelOpen ? panelWidth + 14 : 14) + "px" }} className="absolute top-3 z-[450] px-2.5 py-1 rounded-full bg-slate-900 text-white border border-slate-700 text-[11px] font-mono font-bold flex items-center gap-2 shadow-lg transition-[left] duration-200">
               <span>Heading: {mapBearing}°</span>
               <button
                 type="button"
@@ -3861,77 +3971,76 @@ export default function ParcelMapView({
             </div>
           )}
 
-          {/* GOOGLE EARTH-STYLE BOTTOM-RIGHT NAVIGATION CLUSTER (Rotate + Compass + Zoom) */}
+          {/* UNIFIED BOTTOM-RIGHT MAP NAVIGATION DOCK (Rotate + Compass + Zoom) */}
           <div
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            className="absolute bottom-5 right-4 z-[460] flex items-center gap-2 select-none"
+            className="absolute bottom-4 right-4 z-[460] flex items-center bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-700/90 rounded-xl shadow-xl p-1 gap-0.5 select-none"
           >
-            {/* Manual Rotate Step Buttons (-15° / +15°) */}
-            <div className="hidden sm:flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-full shadow-lg p-0.5">
-              <button
-                type="button"
-                onClick={() => rotateByStep(-15)}
-                title="Rotate Counter-Clockwise (-15°) • Or Right-Click + Drag on map"
-                className="w-7 h-7 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => rotateByStep(15)}
-                title="Rotate Clockwise (+15°) • Or Right-Click + Drag on map"
-                className="w-7 h-7 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
-              >
-                <RotateCw className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            {/* Rotate Left (-15°) */}
+            <button
+              type="button"
+              onClick={() => rotateByStep(-15)}
+              title="Rotate Counter-Clockwise (-15°) • Or Right-Click + Drag on map"
+              className="w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
 
-            {/* Google Earth Red/White Compass Needle Circle Button */}
+            {/* Compass Needle (Drag to Rotate, Click to Reset North) */}
             <button
               ref={compassBtnRef}
               type="button"
               onMouseDown={handleCompassMouseDown}
-              title="Rotate map: Drag needle to rotate manually • Click to reset North (0°) • Right-click + drag on map to rotate"
-              className="w-9 h-9 rounded-full bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg flex items-center justify-center cursor-grab active:cursor-grabbing transition-colors"
+              title="Compass: Drag to rotate manually • Click to reset North (0°) • Right-click + drag on map"
+              className="w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center cursor-grab active:cursor-grabbing transition-colors"
             >
               <svg
                 viewBox="0 0 24 24"
-                className="w-6 h-6"
+                className="w-5 h-5"
                 style={{
                   transform: `rotate(${mapBearing}deg)`,
                 }}
               >
-                {/* Red North Needle */}
-                <polygon points="12,2 15.4,12 8.6,12" fill="#ea4335" />
-                <polygon points="12,2 15.4,12 12,12" fill="#c5221f" />
-                {/* Silver/White South Needle */}
-                <polygon points="12,22 15.4,12 8.6,12" fill="#e2e8f0" />
-                <polygon points="12,22 15.4,12 12,12" fill="#94a3b8" />
-                <circle cx="12" cy="12" r="1.3" fill="#475569" />
+                <polygon points="12,2 15.2,12 8.8,12" fill="#ea4335" />
+                <polygon points="12,2 15.2,12 12,12" fill="#c5221f" />
+                <polygon points="12,22 15.2,12 8.8,12" fill="#e2e8f0" />
+                <polygon points="12,22 15.2,12 12,12" fill="#94a3b8" />
+                <circle cx="12" cy="12" r="1.2" fill="#475569" />
               </svg>
             </button>
 
-            {/* Zoom In / Out Pill (- / +) */}
-            <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-full shadow-lg overflow-hidden">
-              <button
-                type="button"
-                onClick={() => mapInstanceRef.current?.zoomOut()}
-                title="Zoom Out"
-                className="w-8 h-9 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 font-bold text-base transition-colors cursor-pointer"
-              >
-                −
-              </button>
-              <div className="w-[1px] h-5 bg-slate-200 dark:bg-slate-700" />
-              <button
-                type="button"
-                onClick={() => mapInstanceRef.current?.zoomIn()}
-                title="Zoom In"
-                className="w-8 h-9 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 font-bold text-base transition-colors cursor-pointer"
-              >
-                +
-              </button>
-            </div>
+            {/* Rotate Right (+15°) */}
+            <button
+              type="button"
+              onClick={() => rotateByStep(15)}
+              title="Rotate Clockwise (+15°) • Or Right-Click + Drag on map"
+              className="w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+            >
+              <RotateCw className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+
+            {/* Zoom Out (−) */}
+            <button
+              type="button"
+              onClick={() => mapInstanceRef.current?.zoomOut()}
+              title="Zoom Out"
+              className="w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white font-bold text-sm transition-colors cursor-pointer"
+            >
+              −
+            </button>
+
+            {/* Zoom In (+) */}
+            <button
+              type="button"
+              onClick={() => mapInstanceRef.current?.zoomIn()}
+              title="Zoom In"
+              className="w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white font-bold text-sm transition-colors cursor-pointer"
+            >
+              +
+            </button>
           </div>
 
           {(importStatus || renderProgress) && (
@@ -4586,4 +4695,7 @@ export default function ParcelMapView({
     </div>
   );
 }
+
+
+
 

@@ -204,6 +204,12 @@ app.patch('/api/lots/:id/dispatch', async (req, res) => {
   }
 });
 
+// Comment out or remove the local listener for production
+/*
 app.listen(PORT, () => {
   console.log('CaneReadyPH API Server running at http://localhost:' + PORT + '/api/lots (Engine: ' + DB_ENGINE.toUpperCase() + ')');
 });
+*/
+
+// Export the app for Vercel
+export default app;
